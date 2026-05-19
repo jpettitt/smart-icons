@@ -81,6 +81,16 @@ export class Painter {
   }
 
   private scanForIconsAndShadows(node: Element | Document | ShadowRoot): void {
+    // If the input itself is a custom element with a shadow root, descend
+    // into it. handleMutations hands us added nodes — those are usually
+    // custom elements (hui-tile-card etc.) whose entire content lives in
+    // their shadow tree; querySelectorAll on their *light* DOM finds nothing.
+    // Without this hop we'd attach observers to the parent shadow root,
+    // see the new card added, scan its (empty) light DOM, and silently drop
+    // the entire subtree on the floor.
+    const ownShadow = (node as Element & { shadowRoot?: ShadowRoot }).shadowRoot;
+    if (ownShadow) this.attachAndScan(ownShadow);
+
     // Paint any ha-state-icon in this subtree.
     const icons = (node as Element).querySelectorAll?.('ha-state-icon');
     if (icons) {
