@@ -164,13 +164,13 @@ export const editorStyles = css`
     outline: none;
     border-color: var(--primary-color, #03a9f4);
   }
-  /* HA's pickers — both require a .label property to render their
-     floating-label layout correctly. Without it the input area
-     collapses to zero height, which is what made the first picker
-     attempt look broken. Both pickers get the same flex-friendly
-     full-width container. */
+  /* HA's selector + icon picker both want full-width and a sensible
+     min-width:0 so they don't blow out flex parents. ha-selector is
+     used for entity fields (HA's options-flow dispatcher); ha-icon-picker
+     for icons. Both require a .label to render their floating-label
+     layout correctly. */
   ha-icon-picker,
-  ha-entity-picker {
+  ha-selector {
     display: block;
     width: 100%;
     min-width: 0;

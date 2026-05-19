@@ -49,12 +49,12 @@ export class SmartIconsRuleEditor extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    // HA's pickers (ha-icon-picker, ha-entity-picker) may be lazy-loaded.
-    // If they land after first render, re-render so plain inputs upgrade.
-    // Both turned out to work fine once we pass a `.label` — matches the
-    // pattern weather-radar-card uses, and what was missing in the
-    // first attempt that made these pickers look broken.
-    for (const tag of ['ha-icon-picker', 'ha-entity-picker']) {
+    // HA's pickers are lazy-loaded; re-render when they land so plain
+    // inputs upgrade. We use `ha-selector` for entities (HA's
+    // higher-level dispatcher — same code path as options flows, handles
+    // all version-specific picker variants internally) and
+    // `ha-icon-picker` for icons.
+    for (const tag of ['ha-icon-picker', 'ha-selector']) {
       if (!customElements.get(tag)) {
         void customElements
           .whenDefined(tag)
@@ -116,11 +116,15 @@ export class SmartIconsRuleEditor extends LitElement {
   }
 
   /**
-   * Entity field: HA's `ha-entity-picker` when available (gives full
-   * entity autocomplete with state badges + friendly names), with a
-   * plain input + `<datalist>` autocomplete as the defensive fallback.
-   * The `.label` is required — without it the underlying `ha-picker`
-   * layout collapses, which is what made the first attempt look broken.
+   * Entity field: HA's `ha-selector` with an `entity` selector config —
+   * the same component HA's own options flows use. Wrapping at this
+   * level rather than reaching for `ha-entity-picker` directly avoids
+   * the click/hover layout bug we saw with the lower-level picker in
+   * the dialog context (see weather-radar-card editor.ts for the
+   * upstream-validated pattern).
+   *
+   * Falls back to a plain input + `<datalist>` autocomplete if
+   * `ha-selector` isn't loaded by render time.
    */
   private renderEntityField(
     label: string,
@@ -129,17 +133,17 @@ export class SmartIconsRuleEditor extends LitElement {
     onChange: (v: string) => void,
     required = false
   ): TemplateResult {
-    if (customElements.get('ha-entity-picker') && this.hass) {
+    if (customElements.get('ha-selector') && this.hass) {
       return html`
         <div class="field">
-          <ha-entity-picker
+          <ha-selector
             .hass=${this.hass}
+            .selector=${{ entity: {} }}
             .value=${value}
             .label=${label}
-            .allowCustomEntity=${true}
             @value-changed=${(e: CustomEvent<{ value: string }>) =>
               onChange(e.detail?.value ?? '')}
-          ></ha-entity-picker>
+          ></ha-selector>
         </div>
       `;
     }

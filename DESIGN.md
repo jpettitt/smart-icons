@@ -235,8 +235,13 @@ management. v0.1 ships the minimum:
 - The form is grouped into **Apply to** / **React to** / **Decoration** /
   **Options** sections. Enabled toggle lives in the dialog header so
   it's always visible.
-- Entity fields use `ha-entity-picker` (passes `.label`, falls back to
-  plain input + datalist if the picker chunk isn't loaded yet).
+- Entity fields use `ha-selector` with an `{ entity: {} }` selector
+  config — HA's higher-level dispatcher and the same code path its
+  options flows use. Reaching directly for `ha-entity-picker` worked
+  rendering-wise but had a CSS click-area bug in the dialog context;
+  routing through `ha-selector` sidesteps it because HA handles the
+  picker selection internally. Falls back to plain input + datalist
+  if the chunk isn't loaded yet.
 - Icon fields use `ha-icon-picker` (same `.label` pattern, same
   fallback shape but with an `<ha-icon>` preview swatch).
 - Color fields use a native `<input type="color">` swatch next to a
