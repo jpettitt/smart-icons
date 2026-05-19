@@ -25,6 +25,14 @@ interface IconHost extends HTMLElement {
   shadowRoot: ShadowRoot;
 }
 
+// Catch-up scan schedule, in milliseconds after start(). Lovelace renders
+// asynchronously and Lit's batched template instantiation doesn't always
+// fire childList mutations our observers can latch onto, so the initial
+// scan can miss late-arriving tile cards. Re-scanning is idempotent
+// (adopt() de-dupes hosts, attachAndScan de-dupes observers), and each
+// rescan is a few hundred microseconds at most.
+const CATCHUP_SCAN_DELAYS_MS = [100, 500, 2000] as const;
+
 export class Painter {
   private observers = new Set<MutationObserver>();
   private observedRoots = new WeakSet<Document | ShadowRoot>();
@@ -32,6 +40,7 @@ export class Painter {
   private knownHosts = new Set<IconHost>();
   private running = false;
   private repaintScheduled = false;
+  private catchupTimers: ReturnType<typeof setTimeout>[] = [];
 
   constructor(
     private readonly getRules: RuleProvider,
@@ -42,11 +51,20 @@ export class Painter {
     if (this.running) return;
     this.running = true;
     this.attachAndScan(root);
+
+    // See the comment on CATCHUP_SCAN_DELAYS_MS for the why.
+    this.catchupTimers = CATCHUP_SCAN_DELAYS_MS.map((delay) =>
+      setTimeout(() => {
+        if (this.running) this.scanForIconsAndShadows(root);
+      }, delay)
+    );
   }
 
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    for (const t of this.catchupTimers) clearTimeout(t);
+    this.catchupTimers = [];
     for (const mo of this.observers) mo.disconnect();
     this.observers.clear();
     for (const host of this.knownHosts) this.release(host);

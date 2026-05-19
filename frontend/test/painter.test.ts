@@ -132,6 +132,39 @@ describe('Painter discovery', () => {
     expect(inner.style.color).to.equal('orange');
   });
 
+  it('catch-up scan picks up hosts added after start() without any mutation', async () => {
+    // Regression for the timing bug: Lit's batched template instantiation
+    // doesn't always fire mutations our observers can see. To simulate
+    // that, build the host *off* the document tree, start the painter,
+    // then graft it on by reaching into the shadow root in a way that
+    // looks (to MutationObserver) like nothing happened.
+    const rules: Rule[] = [makeRule('light.late', { color: 'purple' })];
+    painter = new Painter(
+      () => rules,
+      () => 'on'
+    );
+    painter.start();
+
+    host = makeTileCard('light.late');
+    // Defeat MutationObserver — drop the node in via the host's *parent*
+    // shadowRoot before the parent has been observed (i.e. document.body
+    // wrap inside a fresh shadow root the painter hasn't seen).
+    const wrap = document.createElement('isolation-fake');
+    const wrapShadow = wrap.attachShadow({ mode: 'open' });
+    wrapShadow.appendChild(host);
+    document.body.appendChild(wrap);
+
+    // The first catch-up tick fires at 100ms; give it a hair more.
+    await new Promise((r) => setTimeout(r, 150));
+
+    const inner = host.shadowRoot!
+      .querySelector('div')!
+      .querySelector('ha-state-icon') as HTMLElement;
+    expect(inner.style.color).to.equal('purple');
+
+    wrap.remove();
+  });
+
   it('does not paint hosts whose entity has no matching rule', async () => {
     const rules: Rule[] = [makeRule('light.kitchen', { color: 'red' })];
     painter = new Painter(
