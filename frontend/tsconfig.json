@@ -11,7 +11,9 @@
     "noUnusedParameters": true,
     "noImplicitOverride": true,
     "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false
   },
   "include": ["src/**/*", "test/**/*"]
 }

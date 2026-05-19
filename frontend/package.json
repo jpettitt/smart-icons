@@ -5,7 +5,9 @@
   "type": "module",
   "description": "Frontend bundle for the smart-icons Home Assistant integration.",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --format=esm --target=es2022 --minify --outfile=../custom_components/smart_icons/static/smart_icons.js",
+    "build": "npm run build:main && npm run build:panel",
+    "build:main": "esbuild src/index.ts --bundle --format=esm --target=es2022 --minify --outfile=../custom_components/smart_icons/static/smart_icons.js",
+    "build:panel": "esbuild src/panel/index.ts --bundle --format=esm --target=es2022 --minify --outfile=../custom_components/smart_icons/static/smart_icons_panel.js",
     "watch": "esbuild src/index.ts --bundle --format=esm --target=es2022 --sourcemap --watch --outfile=../custom_components/smart_icons/static/smart_icons.js",
     "typecheck": "tsc --noEmit",
     "test": "wtr",
@@ -18,5 +20,8 @@
     "@web/test-runner": "^0.20.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "lit": "^3.3.3"
   }
 }

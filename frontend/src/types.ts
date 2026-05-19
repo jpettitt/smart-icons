@@ -27,6 +27,10 @@ export interface Rule {
   id: string;
   target: string;
   source: string;
+  /** When set, the injector reads this attribute on `source` rather than
+   *  the entity's state. Lets rules drive off numeric attributes like
+   *  `sun.sun.azimuth` or `weather.home.temperature`. */
+  source_attribute?: string | null;
   mode: RuleMode;
   thresholds?: ThresholdEntry[];
   mapping?: Record<string, Decoration>;

@@ -105,6 +105,8 @@ swap the glyph without changing color, or do both. The same three modes
   "id": "01HXYZ...",               // ULID, server-assigned
   "target": "light.kitchen",       // entity whose icon is decorated
   "source": "sensor.kitchen_temp", // entity driving the decoration (default: target)
+  "source_attribute": null,        // optional attribute on `source`; e.g. "azimuth"
+                                    //   to drive off `sun.sun.azimuth` instead of state
   "mode": "thresholds",            // "thresholds" | "mapping" | "template"
 
   // mode=thresholds — evaluated in order, first match wins; final entry with
@@ -223,21 +225,33 @@ Constraints:
 
 ### 5.2 Door 2 — Smart Icons panel
 
-A registered sidebar panel (or sub-page under `Settings → Devices &
-services`) hosting full rule management:
+A registered sidebar panel (Settings → Smart Icons) hosting full rule
+management. v0.1 ships the minimum:
 
-- Sortable, searchable table: target / source / mode / enabled toggle.
-- Inline editor on row expand (same `<smart-icons-rule-editor>` as Door 1).
-- Drag-reorder for priority within a target.
-- **Live preview pane**: pick an entity, scrub a fake `source.state` value,
-  watch a sample `ha-state-icon` re-color in real time.
-- Import / export YAML for backup and sharing.
-- "Compatibility status" badge: shows HA version, whether dialog injection
-  is active, last error from compat layer.
+- Table: target / source (with `.attribute` suffix when set) / mode /
+  enabled toggle / priority / edit + delete buttons.
+- `+ Add rule` button opens an `<ha-dialog>`-wrapped
+  `<smart-icons-rule-editor>` form.
+- The form is grouped into **Apply to** / **React to** / **Decoration** /
+  **Options** sections. Enabled toggle lives in the dialog header so
+  it's always visible.
+- Entity fields use `ha-entity-picker` (passes `.label`, falls back to
+  plain input + datalist if the picker chunk isn't loaded yet).
+- Icon fields use `ha-icon-picker` (same `.label` pattern, same
+  fallback shape but with an `<ha-icon>` preview swatch).
+- Color fields use a native `<input type="color">` swatch next to a
+  text input that accepts hex / named colors / `var(--…)`.
+- Source-attribute field has a `<datalist>` populated live from
+  `hass.states[source].attributes`, with a hint that updates as the
+  user types showing `entity.attribute` vs `entity` (state).
 
-Panel registers via `async_register_built_in_panel` (or the custom-panel
-equivalent), pointing at a static URL served by the integration. Element is
-a Lit-based SPA — no React, no bundler magic beyond esbuild.
+Deferred to v0.2+: sortable / searchable table, drag-reorder priority,
+live preview pane, YAML import/export, compatibility-status badge.
+
+The panel registers via `async_register_built_in_panel` (custom panel
+mode) pointing at `/smart_icons_static/smart_icons_panel.js` — a
+separate Lit bundle (~40 KB) lazy-loaded only when the user opens the
+panel. The always-on `smart_icons.js` painter bundle stays at ~4.5 KB.
 
 ### 5.3 Door 3 — YAML
 
@@ -667,6 +681,10 @@ rule-source subscription bookkeeping.
 | `state-watcher.ts` | Subscribe to all `state_changed`; emit per-entity change events to the painter |
 | `evaluator.ts` | Pure functions kept for future panel preview. **Not** wired into the painter (server-side injection handles applied evaluation); must stay semantically in sync with `evaluator.py`. |
 | `painter.ts` | Color-only, state-driven. Shadow-piercing MutationObserver + catch-up scans; reads `stateObj.attributes.smart_icons_color`, applies `style.color`. |
+| `panel/index.ts` | Entry point for the panel bundle (`smart_icons_panel.js`). Side-effect-imports the panel and editor elements so HA's custom-panel loader picks them up. |
+| `panel/smart-icons-panel.ts` | Sidebar panel: table of rules, add/edit/delete via WS, dialog wrapper. |
+| `panel/rule-editor.ts` | The reusable rule form. Section-grouped UI (Apply to / React to / Decoration / Options); HA pickers with `.label`; datalist + ha-icon fallbacks. |
+| `panel/styles.ts` | Shared CSS for the panel and editor, themed with HA's CSS variables. |
 | `panel/smart-icons-panel.ts` | `<smart-icons-panel>` — Lit page for Door 2 |
 | `panel/rule-table.ts` | Sortable/searchable rule list |
 | `panel/preview-pane.ts` | Live evaluator preview |
@@ -703,7 +721,8 @@ smart-icons/
 │       ├── strings.json
 │       ├── translations/en.json
 │       └── static/
-│           └── smart_icons.js     (built bundle, committed for HACS)
+│           ├── smart_icons.js         (painter bundle, committed for HACS)
+│           └── smart_icons_panel.js   (panel bundle, lazy-loaded)
 ├── frontend/
 │   ├── package.json
 │   ├── tsconfig.json
@@ -758,8 +777,11 @@ smart-icons/
 - [x] **Tests**: pytest for backend (61 tests across rule validation,
   store, WS, evaluator, injector); `@open-wc/testing` + Web Test
   Runner for the frontend (35 tests).
-- [ ] Panel (Door 2) — minimal table + add/edit/delete dialog,
-  `ha-color-picker` for color input. ← next.
+- [x] Panel (Door 2) — sidebar entry; table + add/edit/delete dialog;
+  `ha-entity-picker` + `ha-icon-picker` (with `.label` set) plus
+  datalist/preview fallbacks; section-grouped form; source-attribute
+  support.
+- [ ] CI workflow: pytest + tsc + wtr + build on PR.
 - [ ] Dogfood on author's dashboard for a week.
 
 ### v0.2 — usable for early adopters
@@ -788,9 +810,13 @@ smart-icons/
 Decisions, kept here as a historical record. Cross-referenced into the
 relevant body sections; this list is for context, not authority.
 
-1. **Panel placement.** → Sub-page under `Settings → Devices & services →
-   Smart Icons`. More conventional for a "service" integration. Discoverability
-   handled by the entity-settings injection (Door 1).
+1. **Panel placement.** → **Sidebar entry** ("Smart Icons" with a palette
+   icon). Originally planned as a sub-page under `Settings → Devices &
+   services`, but HA's integration cards don't offer a clean way to launch
+   a custom UI from a config entry without faking an options flow. The
+   sidebar entry uses `async_register_built_in_panel` directly and lands
+   on the panel in one click. Discoverability handled by the entity-
+   settings injection (Door 1, v0.2).
 2. **Per-user vs. per-install rules.** → Per-install for v1. Optional
    `users: [...]` filter may be added later if households actually ask.
 3. **Color picker UX.** → Use HA's built-in `ha-color-picker` (HS-based) and

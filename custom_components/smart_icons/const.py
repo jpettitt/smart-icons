@@ -37,3 +37,12 @@ MAPPING_ELSE_KEY = "_else"
 # painter reads to apply CSS `color` to the icon host.
 ATTR_ICON = "icon"
 ATTR_SMART_ICONS_COLOR = "smart_icons_color"
+
+# Sidebar panel registration. URL path is the slug after /<frontend_url_path>.
+# The custom element name must match the @customElement('smart-icons-panel')
+# in frontend/src/panel/smart-icons-panel.ts.
+PANEL_URL_PATH = "smart-icons"
+PANEL_ELEMENT_NAME = "smart-icons-panel"
+PANEL_BUNDLE_FILENAME = "smart_icons_panel.js"
+PANEL_TITLE = "Smart Icons"
+PANEL_ICON = "mdi:palette-outline"

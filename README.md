@@ -5,18 +5,18 @@ A Home Assistant addon that lets any entity's icon take its **color** and/or
 Jinja templates — applied across the default Lovelace cards without per-card
 configuration.
 
-> **Status:** v0.1 in progress, server-side glyph + client-side color
-> architecture landed. **Glyph swap** is computed in the Python
-> integration and written to `state.attributes.icon` — HA's native
-> templated-entity mechanism — so it survives every Lovelace re-render
-> and works in mobile apps and voice-display devices without any
-> additional code. **Color** is computed server-side too and carried on
-> a `smart_icons_color` attribute that a small frontend painter applies
-> as `style.color`. 96 tests (61 pytest, 35 Web Test Runner) green.
-> Door 2 management panel is the next chunk. See [DESIGN.md](DESIGN.md)
-> for architecture, [TODO.md](TODO.md) for the punch list,
-> [dev/README.md](dev/README.md) for the local HA dev container, and
-> [frontend/README.md](frontend/README.md) for the bundle build.
+> **Status:** v0.1 nearly complete. **Server-side icon injection** writes
+> the computed glyph to `state.attributes.icon` so HA's native render
+> path handles the swap (survives Lovelace remount, works in mobile
+> apps). **Color** is also computed server-side, carried on a
+> `smart_icons_color` attribute that a small frontend painter applies
+> as `style.color`. **Sidebar management panel** (Settings → Smart
+> Icons) provides add/edit/delete with HA's native entity and icon
+> pickers, source-attribute support (e.g. `sun.sun.azimuth`), and
+> section-grouped form layout. 102 tests (67 pytest, 35 Web Test
+> Runner) green. CI workflow + dogfood remain. See
+> [DESIGN.md](DESIGN.md), [TODO.md](TODO.md),
+> [dev/README.md](dev/README.md), [frontend/README.md](frontend/README.md).
 
 ## What problem does it solve?
 

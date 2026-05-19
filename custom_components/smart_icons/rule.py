@@ -81,6 +81,11 @@ _RULE_BASE_SCHEMA = vol.Schema(
     {
         vol.Required("target"): cv.entity_id,
         vol.Optional("source"): cv.entity_id,
+        # When set, the injector reads `state.attributes[source_attribute]`
+        # instead of `state.state` as the value fed to the evaluator. Lets
+        # rules drive off numeric attributes like `sun.sun.azimuth` or
+        # `weather.home.temperature` rather than the entity's main state.
+        vol.Optional("source_attribute"): vol.Any(str, None),
         vol.Required("mode"): vol.In(VALID_MODES),
         vol.Optional("thresholds"): [_threshold_entry],
         vol.Optional("mapping"): _mapping_dict,
@@ -118,6 +123,12 @@ def validate_rule(data: dict[str, Any]) -> dict[str, Any]:
     # consumers see the resolved value without re-deriving each time.
     validated.setdefault("source", validated["target"])
 
+    # Normalize empty source_attribute to None so the injector's
+    # "is attribute set?" check is a clean `if rule.source_attribute:`.
+    if "source_attribute" in validated:
+        attr = validated["source_attribute"]
+        validated["source_attribute"] = attr if attr else None
+
     return validated
 
 
@@ -134,6 +145,7 @@ class Rule:
     thresholds: list[dict[str, Any]] | None = None
     mapping: dict[str, dict[str, Any]] | None = None
     template: str | None = None
+    source_attribute: str | None = None
     created: str = ""
     updated: str = ""
     source_kind: str = SOURCE_KIND_UI
@@ -145,6 +157,7 @@ class Rule:
             id=data.get("id") or "",
             target=data["target"],
             source=data.get("source") or data["target"],
+            source_attribute=data.get("source_attribute") or None,
             mode=data["mode"],
             enabled=data.get("enabled", True),
             priority=data.get("priority", 10),
@@ -169,6 +182,8 @@ class Rule:
             "updated": self.updated,
             "source_kind": self.source_kind,
         }
+        if self.source_attribute is not None:
+            out["source_attribute"] = self.source_attribute
         if self.thresholds is not None:
             out["thresholds"] = self.thresholds
         if self.mapping is not None:

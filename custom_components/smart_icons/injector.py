@@ -142,7 +142,19 @@ class IconInjector:
         decisions: list[tuple[Rule, dict[str, str | None] | None]] = []
         for rule in rules:
             source_state = self._hass.states.get(rule.source)
-            source_value = source_state.state if source_state is not None else None
+            source_value: str | None = None
+            if source_state is not None:
+                if rule.source_attribute:
+                    # Read the named attribute and string-coerce. The
+                    # evaluator does its own numeric parsing internally
+                    # for thresholds; mapping does exact-string match,
+                    # which is what we want for non-numeric attributes
+                    # (e.g. `weather.home.condition`).
+                    attr_value = source_state.attributes.get(rule.source_attribute)
+                    if attr_value is not None:
+                        source_value = str(attr_value)
+                else:
+                    source_value = source_state.state
             decisions.append((rule, evaluate_rule(rule, source_value)))
 
         winner = pick_winner(decisions)

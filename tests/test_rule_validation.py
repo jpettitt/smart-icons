@@ -159,3 +159,24 @@ def test_rule_from_to_dict_round_trip():
     assert again.target == rule.target
     assert again.mode == rule.mode
     assert again.thresholds == rule.thresholds
+
+
+def test_source_attribute_accepted():
+    out = validate_rule(_thresholds_rule(source_attribute="azimuth"))
+    assert out["source_attribute"] == "azimuth"
+
+
+def test_source_attribute_empty_normalized_to_none():
+    out = validate_rule(_thresholds_rule(source_attribute=""))
+    assert out["source_attribute"] is None
+
+
+def test_source_attribute_round_trips_to_dict():
+    out = validate_rule(_thresholds_rule(source_attribute="azimuth"))
+    rule = Rule.from_dict(out)
+    assert rule.source_attribute == "azimuth"
+    d = rule.to_dict()
+    assert d["source_attribute"] == "azimuth"
+    # When attribute is None it's omitted from the serialized dict.
+    rule.source_attribute = None
+    assert "source_attribute" not in rule.to_dict()

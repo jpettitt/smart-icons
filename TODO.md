@@ -47,8 +47,14 @@ Progress so far:
   Bundle: 6.7 KB → 4.6 KB. 96 tests (61 pytest, 35 WTR).
 - [x] Initial-paint polish: `localStorage` rule cache for the panel UI's
   synchronous hydration.
-- [ ] Door 2 panel — minimal table + add/edit/delete dialog with
-  `ha-color-picker`. (Chunk 2.)
+- [x] Door 2 panel (2026-05-19) — sidebar entry, table CRUD,
+  Lit-based editor in `ha-dialog`. Uses HA's native `ha-entity-picker`
+  and `ha-icon-picker` (passing `.label` is the key) with graceful
+  fallback to plain inputs, datalist autocomplete, and `<ha-icon>`
+  preview. Adds source-attribute targeting (`sun.sun.azimuth` style).
+  Section-grouped layout (Apply to / React to / Decoration / Options).
+  Separate `smart_icons_panel.js` bundle (~40 KB Lit + UI),
+  lazy-loaded.
 - [ ] CI workflow: pytest + tsc + wtr + build on PR.
 - [ ] Politeness layer: per-property stand-down when other plugins own
   `style.color` (deferred from v0.1; track for v0.2 per DESIGN.md §11.2).
