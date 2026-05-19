@@ -59,9 +59,26 @@ export interface HassStates {
   [entityId: string]: { state: string; attributes?: Record<string, unknown> };
 }
 
+// Custom attribute the backend injector writes onto target entities to
+// carry a color override. HA doesn't have a native color attribute the
+// frontend respects, so the painter applies this value as `style.color`
+// on the outer `<ha-state-icon>`. Keep in sync with `const.py`.
+export const SMART_ICONS_COLOR_ATTR = 'smart_icons_color';
+
 export interface Hass {
   connection: HassConnection;
   states: HassStates;
+}
+
+// Convenience marker type for the `<ha-state-icon>` host. Most uses
+// only need the entity_id and attribute bag off `stateObj`, so this
+// stays minimal — narrow it where you actually depend on more.
+export interface IconHost extends HTMLElement {
+  stateObj?: {
+    entity_id: string;
+    state: string;
+    attributes?: Record<string, unknown>;
+  };
 }
 
 export interface SubscribeEvent {

@@ -29,25 +29,32 @@ Progress so far:
 
 - [x] Python skeleton (2026-05-18): manifest, config flow, `Rule` +
   validation, `RuleStore` over HA `Store`, WS `list/upsert/delete/subscribe/version`.
-  34 pytest tests pass; integration loads cleanly in the dev container.
 - [x] pytest harness in CI-ready shape (pyproject.toml, requirements_test.txt,
   conftest using `pytest-homeassistant-custom-component`).
 - [x] Frontend skeleton (2026-05-19): TS `RuleStore` (WS sub),
-  `StateWatcher` (state_changed sub), `Painter` (shadow-piercing
-  MutationObserver, rAF-batched repaints, intrinsic-icon revert),
-  pure `evaluator` covering `thresholds` + `mapping` + winner-picking.
-  esbuild → `custom_components/smart_icons/static/smart_icons.js` (5.7 KB
-  minified). 23 frontend tests via `@open-wc/testing` + Web Test Runner.
+  `StateWatcher` (state_changed sub), `Painter`. esbuild → bundled
+  modules at `custom_components/smart_icons/static/`.
 - [x] `add_extra_js_url` + `async_register_static_paths` registration
-  in `frontend.py`; wired into `async_setup_entry`. Bundle missing falls
-  back gracefully (warning, integration stays up).
+  in `frontend.py`. Bundle-missing fallback is graceful (warning,
+  integration stays up).
 - [x] `@open-wc/testing` + Web Test Runner harness (2026-05-19).
+- [x] **Server-side glyph + client-side color** (2026-05-19) —
+  architectural pivot to ride HA's native `state.attributes.icon`
+  mechanism instead of fighting Lit's render cycle. New `evaluator.py`
+  (port of TS) and `injector.py` (state-changed subscriber) drive
+  target-entity attributes; frontend painter shrinks to color-only,
+  state-driven. See [DESIGN.md § 7.0](DESIGN.md#70-architecture--server-side-glyph-client-side-color).
+  Bundle: 6.7 KB → 4.6 KB. 96 tests (61 pytest, 35 WTR).
+- [x] Initial-paint polish: `localStorage` rule cache for the panel UI's
+  synchronous hydration.
 - [ ] Door 2 panel — minimal table + add/edit/delete dialog with
   `ha-color-picker`. (Chunk 2.)
 - [ ] CI workflow: pytest + tsc + wtr + build on PR.
 - [ ] Politeness layer: per-property stand-down when other plugins own
-  `style.color` or have rewritten the inner `<ha-icon>` (deferred from
-  v0.1 chunk 1; track for v0.2 per DESIGN.md §11.2).
+  `style.color` (deferred from v0.1; track for v0.2 per DESIGN.md §11.2).
+- [ ] Investigate color-update latency on rule edit (~1 s observed
+  2026-05-19; icon updates are instant because they ride HA's native
+  state-changed path, color goes through the frontend painter).
 - [ ] Dogfood on author's dashboard for a week.
 
 ## Followups & ideas (parking lot)

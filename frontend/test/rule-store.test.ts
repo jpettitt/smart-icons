@@ -129,3 +129,82 @@ describe('RuleStore', () => {
     expect(store.all()).to.have.lengthOf(0);
   });
 });
+
+describe('RuleStore localStorage cache', () => {
+  const CACHE_KEY = 'smart_icons.rules_cache.v1';
+
+  beforeEach(() => {
+    localStorage.removeItem(CACHE_KEY);
+  });
+
+  it('hydrateFromCache returns 0 when no cache exists', () => {
+    const store = new RuleStore();
+    expect(store.hydrateFromCache()).to.equal(0);
+    expect(store.all()).to.have.lengthOf(0);
+  });
+
+  it('connect writes the server snapshot to cache', async () => {
+    const conn = new FakeConnection();
+    conn.initialRules = [rule({ id: '01' }), rule({ id: '02', target: 'light.b' })];
+    const store = new RuleStore();
+    await store.connect(conn);
+
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY)!);
+    expect(cached.rules).to.have.lengthOf(2);
+    expect(cached.rules.map((r: Rule) => r.id).sort()).to.eql(['01', '02']);
+  });
+
+  it('hydrateFromCache loads previously-cached rules synchronously', async () => {
+    // Prime the cache via a first session.
+    const conn1 = new FakeConnection();
+    conn1.initialRules = [rule({ id: '01', target: 'light.a' })];
+    const store1 = new RuleStore();
+    await store1.connect(conn1);
+
+    // Fresh store, hydrate without connecting.
+    const store2 = new RuleStore();
+    const n = store2.hydrateFromCache();
+    expect(n).to.equal(1);
+    expect(store2.byTarget('light.a')).to.have.lengthOf(1);
+  });
+
+  it('hydrate then connect: server snapshot replaces cache contents', async () => {
+    // Cache has rule A; server says rule B exists instead. Connect wins.
+    localStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({ rules: [rule({ id: 'stale', target: 'light.gone' })] })
+    );
+
+    const store = new RuleStore();
+    store.hydrateFromCache();
+    expect(store.byTarget('light.gone')).to.have.lengthOf(1);
+
+    const conn = new FakeConnection();
+    conn.initialRules = [rule({ id: 'fresh', target: 'light.new' })];
+    await store.connect(conn);
+
+    expect(store.byTarget('light.gone')).to.have.lengthOf(0);
+    expect(store.byTarget('light.new')).to.have.lengthOf(1);
+  });
+
+  it('subscribe events update the cache', async () => {
+    const conn = new FakeConnection();
+    const store = new RuleStore();
+    await store.connect(conn);
+
+    conn.emit({ type: 'added', id: 'X', rule: rule({ id: 'X' }) });
+    let cached = JSON.parse(localStorage.getItem(CACHE_KEY)!);
+    expect(cached.rules.map((r: Rule) => r.id)).to.include('X');
+
+    conn.emit({ type: 'removed', id: 'X', rule: rule({ id: 'X' }) });
+    cached = JSON.parse(localStorage.getItem(CACHE_KEY)!);
+    expect(cached.rules.map((r: Rule) => r.id)).to.not.include('X');
+  });
+
+  it('hydrateFromCache survives corrupt cache contents', () => {
+    localStorage.setItem(CACHE_KEY, '{not valid json');
+    const store = new RuleStore();
+    expect(store.hydrateFromCache()).to.equal(0);
+    expect(store.all()).to.have.lengthOf(0);
+  });
+});

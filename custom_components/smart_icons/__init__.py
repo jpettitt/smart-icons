@@ -10,8 +10,9 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DATA_STORE, DOMAIN
+from .const import DATA_INJECTOR, DATA_STORE, DOMAIN
 from .frontend import async_register_frontend
+from .injector import IconInjector
 from .store import RuleStore
 from .websocket_api import async_register_commands
 
@@ -26,8 +27,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = RuleStore(hass)
     await store.async_load()
 
+    injector = IconInjector(hass, store)
+    injector.async_start()
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][DATA_STORE] = store
+    hass.data[DOMAIN][DATA_INJECTOR] = injector
 
     # Idempotent — async_register_command tolerates the second call as long
     # as the same handlers are registered, but a single config entry is
@@ -41,5 +46,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Tear down on integration removal."""
-    hass.data.get(DOMAIN, {}).pop(DATA_STORE, None)
+    domain_data = hass.data.get(DOMAIN, {})
+    injector: IconInjector | None = domain_data.pop(DATA_INJECTOR, None)
+    if injector is not None:
+        injector.async_stop()
+    domain_data.pop(DATA_STORE, None)
     return True

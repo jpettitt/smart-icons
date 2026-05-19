@@ -325,7 +325,62 @@ async def _async_migrate(old_major: int, old_minor: int, old_data: dict) -> dict
 
 ## 7. Rendering pipeline
 
-The interesting bit.
+### 7.0 Architecture — server-side glyph, client-side color
+
+After validating the §7.6 PoC and then hitting real-world fragility in
+the frontend-only painter (Lit's render cycle overwrote our inner
+`<ha-icon>` writes on Lovelace view switches), v0.1 lands a split
+architecture:
+
+- **Server-side**: the `IconInjector`
+  ([`injector.py`](custom_components/smart_icons/injector.py))
+  subscribes to `state_changed` for each rule's `source` entity, runs
+  the evaluator
+  ([`evaluator.py`](custom_components/smart_icons/evaluator.py)),
+  and writes the winning decoration onto the matching `target`
+  entity's state attributes:
+  - `attributes.icon` — HA's native glyph mechanism. Every
+    `<ha-state-icon>` reads it without our help. This is the same
+    attribute templated entities use for their dynamic icons, so we
+    ride a code path HA already supports.
+  - `attributes.smart_icons_color` — our namespaced extension that
+    carries the desired CSS color. HA has no native attribute the
+    frontend honors for icon color, so we need a small painter to
+    bridge attribute → `style.color`.
+
+- **Client-side**: the [`Painter`](#72-the-painter-color-only) is now color-only
+  and **state-driven**. It walks the DOM, reads each host's
+  `stateObj.attributes.smart_icons_color`, and writes `style.color`.
+  No rule evaluation, no `RuleStore` dependency in the paint path, no
+  DOM races — we're just translating an attribute that's already
+  flowing through HA's natural state-change machinery.
+
+The benefits this unlocked:
+
+- **No icon flash on reload.** The state arrives with the right icon
+  already in `attributes.icon`; Lovelace's first render is already
+  correct.
+- **Glyph survives Lovelace remount.** Switching dashboards rebuilds
+  every `<ha-state-icon>`, but each fresh one reads the same
+  `stateObj.attributes.icon` and renders our value naturally.
+- **Works in all HA surfaces.** Mobile apps, voice-display devices,
+  and anything else that reads HA state-attribute icons sees our
+  decoration too — even though we never ship any code there.
+- **Frontend bundle smaller.** 6.7 KB → 4.6 KB. The TS evaluator is
+  retained for the future panel UI (live preview of pending rules) but
+  is no longer wired into the painter.
+
+What we accept in exchange:
+
+- The Python evaluator must stay in sync with the TS evaluator. Both
+  test suites cover the same semantics ([§ 4.2](#42-evaluation-semantics))
+  to make a divergence loud.
+- Releasing a rule cleans up `smart_icons_color` but leaves the last
+  injected `icon` on the target's state until the owning integration
+  pushes its own update. Documented; acceptable in v0.1.
+- Calling `hass.states.async_set` fires `state_changed`. Automations
+  triggered on transitions are unaffected, but ones triggered on raw
+  events would see the synthetic update.
 
 ### 7.1 Element targeting
 
@@ -353,60 +408,55 @@ Internally, `ha-state-icon` derives an mdi name and renders an inner
 By patching `ha-state-icon` we hit all of these for free. Cards that bypass
 it (custom SVG, image-with-overlay, etc.) are out of scope.
 
-### 7.2 The Painter
+### 7.2 The Painter (color only)
+
+The painter's job in v0.1 is small: read each
+`<ha-state-icon>`'s `stateObj.attributes.smart_icons_color` attribute
+and apply it as inline `style.color` on the host. That's it. No rule
+evaluation, no `RuleStore` dependency in the paint path, no inner-
+element mutation. Glyph swap is server-side (see [§ 7.0](#70-architecture--server-side-glyph-client-side-color)).
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│ RuleStore (cached map: target → Rule[])                         │
-└──────────────┬──────────────────────────────────────────────────┘
-               │ rule changes
-               ▼
-┌─────────────────────────────────────────────────────────────────┐
 │ StateWatcher                                                    │
-│   subscribes to state_changed for ∪{rule.source for all rules} │
-│   on change → compute new decoration for every dependent target │
-│   emit (target → { color?, icon? }) deltas                      │
+│   subscribes to state_changed for all entities                 │
+│   on every change → painter.repaintAll() (batched, microtask)  │
 └──────────────┬──────────────────────────────────────────────────┘
-               │ decoration map
+               │
                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ Painter                                                         │
-│   MutationObserver rooted at <home-assistant-main>              │
-│   on observed ha-state-icon:                                    │
-│     read entityId from .stateObj or attribute                   │
-│     look up decoration in current map                           │
-│     if .color : el.style.color = color                          │
-│     if .icon  : innerHaIcon.setAttribute("icon", icon)          │
-│     tag el.dataset.smartIcons = "color"|"icon"|"both"           │
-│     else if previously owned: clear style.color and/or          │
-│         remove our icon override (revert to derived glyph)      │
-│   on decoration map delta: re-walk our tagged element registry  │
+│   shadow-piercing MutationObserver tree + catch-up scans       │
+│   on each known ha-state-icon host:                             │
+│     read host.stateObj.attributes.smart_icons_color             │
+│     if present : host.style.color = color                       │
+│     if absent and previously owned : host.style.color = ""      │
+│   tag host.dataset.smartIconsOwned = "color"                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-The inner `<ha-icon>` is a child of `ha-state-icon` and may be re-rendered
-when its parent's `stateObj` updates. Our observer's subtree watch catches
-those re-renders so we re-apply the override on the same animation frame.
-The [§ 7.6 PoC](#76-glyph-swap-validation-plan-poc) found that 2026.5
-*does not* re-derive on state change (case A), but the design retains the
-re-apply path because that behavior is internal to `ha-state-icon` and
-could regress in a future HA release.
+**Why blanket-repaint on every state change?** A painted host's
+decoration only depends on its own `stateObj.attributes.smart_icons_color`
+— which only changes via a `state_changed` event for that host's
+entity. Per-host evaluation is O(1) and the whole pass is batched into
+one microtask, so even on a dashboard with hundreds of icons the
+total work is sub-millisecond.
 
-For glyph override specifically, we also remember the entity's *intrinsic*
-icon (what `ha-state-icon` would have rendered without us) so that on
-release we put exactly that back, not whatever was there a moment ago.
+**Why batch with `queueMicrotask` and not `requestAnimationFrame`?**
+`requestAnimationFrame` is paused on backgrounded windows and
+unreliable in headless test browsers. The visual difference between
+"paint next microtask" and "paint next animation frame" for a single
+CSS color write is negligible.
 
-**Shadow-root piercing.** Lovelace cards, the main view, and many `ha-*`
-components each have their own shadow roots; `MutationObserver` does not
-cross shadow boundaries automatically. The painter must attach a fresh
-observer on each shadow root it discovers (recursively, on observed
-`childList` mutations) so that `ha-state-icon` elements created inside
-*new* shadow trees — for example after navigating between dashboards,
-which fully tears down the previous view — get picked up. The PoC
-confirmed the navigation teardown: a per-host observer received no events
-when the host was detached, but the new host on return had no override
-applied. The high-rooted, shadow-piercing observer model in this section
-handles both cases uniformly.
+**Shadow-root piercing.** Lovelace cards, the main view, and many
+`ha-*` components each have their own shadow roots; `MutationObserver`
+does not cross shadow boundaries automatically. The painter attaches a
+fresh observer on each shadow root it discovers (recursively, on
+observed `childList` mutations) so `ha-state-icon` elements created
+inside *new* shadow trees — for example after navigating between
+dashboards, which fully tears down the previous view — get picked up.
+Catch-up scans at 100 / 500 / 2000 ms post-`start()` cover Lovelace
+renders that don't fire usable child-list mutations.
 
 ### 7.3 Politeness
 
@@ -428,12 +478,19 @@ Rules:
 
 ### 7.4 Performance
 
-- Single `MutationObserver`; subtree observation is cheap when filtered.
-- Coalesce mutations into a `requestAnimationFrame` batch.
-- Per-icon paint is O(1) lookup + one style write — negligible.
-- State subscription scoped to the union of rule sources, not all entities.
-- Server-side template evaluation cached by HA's existing template engine,
-  re-fired only on dependency change. We do not poll.
+- One `MutationObserver` per shadow root the painter discovers, with
+  `childList: true, subtree: true`. Subtree observation is cheap when
+  filtered to ha-state-icon discovery only.
+- Repaints batched into a single microtask via `queueMicrotask`. A
+  burst of `state_changed` events on a busy dashboard collapses to one
+  paint pass.
+- Per-icon paint is O(1) attribute read + one style write — negligible.
+- The frontend `StateWatcher` subscribes to *all* `state_changed`
+  events. v0.1 takes the simplicity over narrowing to per-entity
+  subscriptions; if a future profile shows the broadcast handler as
+  hot, narrow then.
+- Server-side template evaluation (v0.2) will reuse HA's existing
+  template engine, cached and re-fired only on dependency change.
 
 ### 7.5 Theme & dark-mode interaction
 
@@ -467,7 +524,7 @@ on the outer host worked as expected. Dashboard navigation tore down the
 host element entirely (per-host observer received no events; a fresh host
 with the default glyph appeared on return) — this is normal DOM teardown,
 not a write-fight, and is handled by the painter rooting its
-`MutationObserver` higher per [§ 7.2](#72-the-painter). Case D and E
+`MutationObserver` higher per [§ 7.2](#72-the-painter-color-only). Case D and E
 ruled out by direct observation; C ruled out by the lack of any sync
 re-derive after `setAttribute`.
 
@@ -533,7 +590,7 @@ window.__smartIconsPoc = { host, inner, orig, mo };
 
 #### 7.6.4 Decision matrix
 
-| Observation | Case | Implication for [§ 7.2](#72-the-painter) |
+| Observation | Case | Implication for [§ 7.2](#72-the-painter-color-only) |
 | --- | --- | --- |
 | Icon persists through all 6 scenarios, zero parent-driven `icon` mutations | **A — clean** | Apply once on element-discovery; observer only needs `childList` on `home-assistant-main` to catch new `ha-state-icon` instances. Cheapest path. |
 | Parent rewrites `icon` only during scenarios 3 / 5 (state change or rebuild) | **B — expected** | Current design works as drafted. Painter re-applies in the observer callback, coalesced to one `requestAnimationFrame`. |
@@ -543,13 +600,13 @@ window.__smartIconsPoc = { host, inner, orig, mo };
 
 #### 7.6.5 Outcomes
 
-- **Case A or B**: keep [§ 7.2](#72-the-painter) as drafted; v0.2 glyph-swap
+- **Case A or B**: keep [§ 7.2](#72-the-painter-color-only) as drafted; v0.2 glyph-swap
   cleared to implement. Update the **Result** line above with the case and
   HA version.
 - **Case C**: add a §7.7 documenting the chosen fallback (C1/C2/C3) and
   reasoning; bump v0.2 "Icon glyph swap" complexity in
   [§ 11.2](#v02--usable-for-early-adopters) and re-estimate.
-- **Case D**: amend [§ 7.2](#72-the-painter) painter loop to handle child
+- **Case D**: amend [§ 7.2](#72-the-painter-color-only) painter loop to handle child
   rebuilds; cache intrinsic icon for revert.
 - **Case E**: rewrite [§ 7.1](#71-element-targeting) targeting paragraph
   before any painter code is written.
@@ -585,27 +642,31 @@ per-connection to avoid editor abuse.
 
 | File | Responsibility |
 | --- | --- |
-| `__init__.py` | `async_setup_entry`, wires Store + WS + frontend; idempotent setup |
+| `__init__.py` | `async_setup_entry`, wires Store + injector + WS + frontend; idempotent setup |
 | `manifest.json` | `domain`, `name`, `version`, `dependencies: ["frontend","websocket_api"]`, `iot_class: "calculated"`, `integration_type: "service"` |
 | `config_flow.py` | Minimal single-step flow; just "Add" — no inputs needed |
-| `const.py` | Constants — `DOMAIN = "smart_icons"`, storage keys, defaults |
+| `const.py` | Constants — `DOMAIN`, storage keys, `ATTR_ICON`, `ATTR_SMART_ICONS_COLOR`, defaults |
 | `store.py` | `RuleStore` wrapping `Store`; cache, subscribers, migrations |
+| `rule.py` | `@dataclass(slots=True)` Rule type + validation helpers |
+| `evaluator.py` | Pure rule evaluation — `evaluate_thresholds`, `evaluate_mapping`, `evaluate_rule`, `pick_winner`. Mirrors `frontend/src/evaluator.ts` ([§ 7.0](#70-architecture--server-side-glyph-client-side-color)). |
+| `injector.py` | `IconInjector` — subscribes to source-entity `state_changed`, evaluates rules, writes `attributes.icon` + `attributes.smart_icons_color` to target via `hass.states.async_set`. |
 | `websocket_api.py` | Five command handlers, voluptuous schemas |
 | `frontend.py` | `async_register_static_paths` + `add_extra_js_url`; serves the bundled JS at `/smart_icons_static/smart_icons.js` |
-| `rule.py` | `@dataclass(slots=True)` Rule type + validation helpers |
 
-Estimated size: **~400 lines** of Python total, plus boilerplate (manifest,
-strings.json, tests). Heavy reuse of HA helpers; little novel logic.
+Estimated size: **~700 lines** of Python (was ~400 before server-side
+injection moved here from the frontend), plus boilerplate and tests.
+Heavy reuse of HA helpers; the novel logic is the injector's
+rule-source subscription bookkeeping.
 
 ### 9.2 Frontend (TypeScript) — bundled to one JS file
 
 | Module | Responsibility |
 | --- | --- |
-| `index.ts` | Wait for `<home-assistant>` to exist; bootstrap everything |
-| `rule-store.ts` | WS subscribe, expose `{ rules, byTarget(id), subscribe(cb) }` |
-| `state-watcher.ts` | Subscribe to relevant `state_changed`; emit color-map deltas |
-| `evaluator.ts` | Pure functions: `evaluateThresholds`, `evaluateMapping`. Template mode round-trips via `render_template` WS. |
-| `painter.ts` | The `MutationObserver` + politeness layer |
+| `index.ts` | Wait for `<home-assistant>` to exist; bootstrap painter + watcher + rule store |
+| `rule-store.ts` | WS subscribe, expose `{ rules, byTarget(id), subscribe(cb), hydrateFromCache() }`; localStorage cache for instant panel display |
+| `state-watcher.ts` | Subscribe to all `state_changed`; emit per-entity change events to the painter |
+| `evaluator.ts` | Pure functions kept for future panel preview. **Not** wired into the painter (server-side injection handles applied evaluation); must stay semantically in sync with `evaluator.py`. |
+| `painter.ts` | Color-only, state-driven. Shadow-piercing MutationObserver + catch-up scans; reads `stateObj.attributes.smart_icons_color`, applies `style.color`. |
 | `panel/smart-icons-panel.ts` | `<smart-icons-panel>` — Lit page for Door 2 |
 | `panel/rule-table.ts` | Sortable/searchable rule list |
 | `panel/preview-pane.ts` | Live evaluator preview |
@@ -635,10 +696,14 @@ smart-icons/
 │       ├── const.py
 │       ├── store.py
 │       ├── rule.py
+│       ├── evaluator.py
+│       ├── injector.py
 │       ├── websocket_api.py
 │       ├── frontend.py
 │       ├── strings.json
-│       └── translations/en.json
+│       ├── translations/en.json
+│       └── static/
+│           └── smart_icons.js     (built bundle, committed for HACS)
 ├── frontend/
 │   ├── package.json
 │   ├── tsconfig.json
@@ -678,22 +743,30 @@ smart-icons/
 
 ### v0.1 — proof of life (1–2 weekends)
 
-- [ ] **Dev environment**: `dev/docker-compose.yml` runs HA with this
-  repo's `custom_components/smart_icons/` bind-mounted and the built
-  frontend served. One `make dev` (or equivalent) to go from clone → live HA.
-- [ ] Python skeleton: integration, config flow, Store, WS `list/upsert/delete`
-- [ ] Frontend skeleton: RuleStore, StateWatcher, Painter
-- [ ] Modes: `thresholds`, `mapping` only (no template yet)
-- [ ] Panel (Door 2) — minimal table + add/edit/delete dialog, `ha-color-picker`
-  for color input
-- [ ] Auto-register frontend resource on setup
-- [ ] **Tests**: pytest for backend; `@open-wc/testing` + Web Test Runner
-  for the frontend (evaluator, rule-store, painter behavior). CI runs both.
-- [ ] Dogfood on author's dashboard for a week
+- [x] **Dev environment**: `dev/docker-compose.yml` runs HA with this
+  repo's `custom_components/smart_icons/` bind-mounted.
+- [x] Python skeleton: integration, config flow, Store, WS `list/upsert/delete/subscribe/version`.
+- [x] Frontend skeleton: RuleStore, StateWatcher, Painter.
+- [x] **Server-side icon injection** ([§ 7.0](#70-architecture--server-side-glyph-client-side-color))
+  — evaluator + injector run in Python; glyph swap rides HA's native
+  `attributes.icon` mechanism. Frontend painter is color-only.
+- [x] Modes: `thresholds`, `mapping` (template accepted at storage
+  layer; runtime evaluation deferred to v0.2).
+- [x] Auto-register frontend resource on setup.
+- [x] Initial-paint polish: `localStorage` rule cache for the panel UI's
+  synchronous hydration before the WS round trip.
+- [x] **Tests**: pytest for backend (61 tests across rule validation,
+  store, WS, evaluator, injector); `@open-wc/testing` + Web Test
+  Runner for the frontend (35 tests).
+- [ ] Panel (Door 2) — minimal table + add/edit/delete dialog,
+  `ha-color-picker` for color input. ← next.
+- [ ] Dogfood on author's dashboard for a week.
 
 ### v0.2 — usable for early adopters
 
-- [ ] **Icon glyph swap** alongside color (full decoration model from § 4.1)
+- [x] **Icon glyph swap** alongside color (full decoration model from
+  § 4.1) — already landed in v0.1 via the server-side injector. Listed
+  here for historical accuracy; was originally targeted for v0.2.
 - [ ] Door 1 — entity settings dialog injection (with kill-switch)
 - [ ] Template mode + live preview pane in panel
 - [ ] Politeness layer (don't fight other plugins, per-property)

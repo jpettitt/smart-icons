@@ -1,58 +1,53 @@
 /**
- * The Painter walks the DOM, finds `<ha-state-icon>` elements, evaluates
- * any rules whose target matches the icon's entity, and applies the
- * winning decoration (color on the outer host, glyph on the inner
- * `<ha-icon>`). On rule changes or source-state changes the painter
- * re-walks its known set; new `<ha-state-icon>` elements appearing in
- * the DOM (e.g. on dashboard navigation) are discovered via a single
- * shadow-piercing MutationObserver tree.
+ * Color painter for `<ha-state-icon>` hosts.
  *
- * v0.1 keeps the politeness layer minimal — we always paint when a rule
- * matches. The full per-property stand-down behavior (DESIGN.md § 7.3)
- * lands in v0.2.
+ * Reads each host's `stateObj.attributes.smart_icons_color` and applies
+ * it as inline `style.color`. The backend `IconInjector` is responsible
+ * for computing the value (server-side rule evaluation against the
+ * source entity); the painter is just the local DOM-side bridge that
+ * turns the attribute into an actual CSS color.
+ *
+ * Icon glyph swap is NOT done here — that runs entirely server-side via
+ * the standard `attributes.icon` mechanism that templated entities use.
+ * The painter only exists because HA has no native attribute the
+ * frontend respects for icon color.
+ *
+ * Discovery uses a shadow-piercing MutationObserver tree (catch-up
+ * scans at 100/500/2000 ms cover late-mounted Lovelace tiles); see
+ * DESIGN.md § 7.2.
  */
 
-import type { Decoration, Rule } from './types';
-import { evaluateRule, pickWinner } from './evaluator';
+import type { IconHost } from './types';
+import { SMART_ICONS_COLOR_ATTR } from './types';
 
-type RuleProvider = () => Rule[];
-type StateGetter = (entityId: string) => string | undefined;
-
-const DATA_OWNED = 'smartIconsOwned';
-
-interface IconHost extends HTMLElement {
-  stateObj?: { entity_id: string; state?: string };
-  shadowRoot: ShadowRoot;
+interface IconHostWithStateObj extends HTMLElement {
+  stateObj?: {
+    entity_id: string;
+    state: string;
+    attributes?: Record<string, unknown>;
+  };
 }
 
-// Catch-up scan schedule, in milliseconds after start(). Lovelace renders
-// asynchronously and Lit's batched template instantiation doesn't always
-// fire childList mutations our observers can latch onto, so the initial
-// scan can miss late-arriving tile cards. Re-scanning is idempotent
-// (adopt() de-dupes hosts, attachAndScan de-dupes observers), and each
-// rescan is a few hundred microseconds at most.
+const DATA_OWNED = 'smartIconsOwned';
 const CATCHUP_SCAN_DELAYS_MS = [100, 500, 2000] as const;
 
 export class Painter {
   private observers = new Set<MutationObserver>();
   private observedRoots = new WeakSet<Document | ShadowRoot>();
-  private intrinsicIcons = new WeakMap<HTMLElement, string | null>();
-  private knownHosts = new Set<IconHost>();
+  private knownHosts = new Set<IconHostWithStateObj>();
   private running = false;
   private repaintScheduled = false;
   private catchupTimers: ReturnType<typeof setTimeout>[] = [];
-
-  constructor(
-    private readonly getRules: RuleProvider,
-    private readonly getState: StateGetter
-  ) {}
 
   start(root: Document | ShadowRoot = document): void {
     if (this.running) return;
     this.running = true;
     this.attachAndScan(root);
 
-    // See the comment on CATCHUP_SCAN_DELAYS_MS for the why.
+    // Lovelace renders cards asynchronously; mutation observers don't
+    // always catch every shadow root before its content is filled in.
+    // Catch-up scans are idempotent — adopt() de-dupes, attachAndScan
+    // de-dupes observers.
     this.catchupTimers = CATCHUP_SCAN_DELAYS_MS.map((delay) =>
       setTimeout(() => {
         if (this.running) this.scanForIconsAndShadows(root);
@@ -71,14 +66,14 @@ export class Painter {
     this.knownHosts.clear();
   }
 
-  /**
-   * Re-evaluate every known host. Batched into the next animation frame
-   * so a flurry of rule/state updates only paints once.
-   */
   repaintAll(): void {
     if (!this.running || this.repaintScheduled) return;
     this.repaintScheduled = true;
-    requestAnimationFrame(() => {
+    // queueMicrotask over requestAnimationFrame: rAF is paused on
+    // hidden/backgrounded windows (and unreliable in headless test
+    // browsers); microtasks always run. The visual difference is
+    // negligible for a single CSS color write per host.
+    queueMicrotask(() => {
       this.repaintScheduled = false;
       for (const host of this.knownHosts) {
         if (host.isConnected) this.paintHost(host);
@@ -87,9 +82,11 @@ export class Painter {
     });
   }
 
-  /** Discovery: walk a root looking for ha-state-icon elements and shadow roots. */
   private attachAndScan(root: Document | ShadowRoot | Element): void {
-    if ((root === document || root instanceof ShadowRoot) && !this.observedRoots.has(root)) {
+    if (
+      (root === document || root instanceof ShadowRoot) &&
+      !this.observedRoots.has(root)
+    ) {
       const mo = new MutationObserver((records) => this.handleMutations(records));
       mo.observe(root, { childList: true, subtree: true, attributes: false });
       this.observers.add(mo);
@@ -100,21 +97,14 @@ export class Painter {
 
   private scanForIconsAndShadows(node: Element | Document | ShadowRoot): void {
     // If the input itself is a custom element with a shadow root, descend
-    // into it. handleMutations hands us added nodes — those are usually
-    // custom elements (hui-tile-card etc.) whose entire content lives in
-    // their shadow tree; querySelectorAll on their *light* DOM finds nothing.
-    // Without this hop we'd attach observers to the parent shadow root,
-    // see the new card added, scan its (empty) light DOM, and silently drop
-    // the entire subtree on the floor.
+    // into it — see DESIGN.md § 7.2 for why this hop is load-bearing.
     const ownShadow = (node as Element & { shadowRoot?: ShadowRoot }).shadowRoot;
     if (ownShadow) this.attachAndScan(ownShadow);
 
-    // Paint any ha-state-icon in this subtree.
     const icons = (node as Element).querySelectorAll?.('ha-state-icon');
     if (icons) {
-      for (const el of icons) this.adopt(el as IconHost);
+      for (const el of icons) this.adopt(el as IconHostWithStateObj);
     }
-    // Walk one level of shadow roots and recurse into each.
     const candidates = (node as Element).querySelectorAll?.('*');
     if (!candidates) return;
     for (const el of candidates) {
@@ -132,76 +122,35 @@ export class Painter {
     }
   }
 
-  /** First time we see a host, snapshot its intrinsic glyph and paint it. */
-  private adopt(host: IconHost): void {
+  private adopt(host: IconHostWithStateObj): void {
     if (!host.isConnected) return;
     if (!this.knownHosts.has(host)) {
-      const inner = host.shadowRoot?.querySelector('ha-icon');
-      if (inner) this.intrinsicIcons.set(host, inner.getAttribute('icon'));
       this.knownHosts.add(host);
     }
     this.paintHost(host);
   }
 
-  /** Evaluate rules for this host's entity and apply the winning decoration. */
-  private paintHost(host: IconHost): void {
+  private paintHost(host: IconHostWithStateObj): void {
     const entityId = host.stateObj?.entity_id;
     if (!entityId) return;
 
-    const rules = this.getRules().filter((r) => r.target === entityId && r.enabled);
-    if (rules.length === 0) {
+    const attrs = host.stateObj?.attributes;
+    const color = (attrs?.[SMART_ICONS_COLOR_ATTR] ?? null) as string | null;
+
+    if (color != null) {
+      if (host.style.color !== color) host.style.color = color;
+      host.dataset[DATA_OWNED] = 'color';
+    } else if (host.dataset[DATA_OWNED]) {
       this.release(host);
-      return;
     }
-
-    const decorations: (Decoration | null)[] = rules.map((r) =>
-      evaluateRule(r, this.getState(r.source) ?? host.stateObj?.state)
-    );
-    const winner = pickWinner(rules, decorations);
-
-    if (!winner) {
-      this.release(host);
-      return;
-    }
-
-    const inner = host.shadowRoot?.querySelector('ha-icon');
-
-    // Color: write only when the value would change. Setting style.color
-    // to the same value still fires our observer in some browsers, so the
-    // equality check both saves work and prevents observer storms.
-    if (winner.color != null) {
-      if (host.style.color !== winner.color) host.style.color = winner.color;
-    } else if (host.dataset[DATA_OWNED]?.includes('color')) {
-      host.style.color = '';
-    }
-
-    if (winner.icon != null && inner) {
-      if (inner.getAttribute('icon') !== winner.icon) {
-        inner.setAttribute('icon', winner.icon);
-      }
-    } else if (host.dataset[DATA_OWNED]?.includes('icon') && inner) {
-      const intrinsic = this.intrinsicIcons.get(host);
-      if (intrinsic != null && inner.getAttribute('icon') !== intrinsic) {
-        inner.setAttribute('icon', intrinsic);
-      }
-    }
-
-    const parts: string[] = [];
-    if (winner.color != null) parts.push('color');
-    if (winner.icon != null) parts.push('icon');
-    host.dataset[DATA_OWNED] = parts.join(',');
   }
 
-  /** Restore intrinsic glyph and clear inline color; forget ownership. */
-  private release(host: IconHost): void {
-    const owned = host.dataset[DATA_OWNED];
-    if (!owned) return;
-    if (owned.includes('color')) host.style.color = '';
-    if (owned.includes('icon')) {
-      const inner = host.shadowRoot?.querySelector('ha-icon');
-      const intrinsic = this.intrinsicIcons.get(host);
-      if (inner && intrinsic != null) inner.setAttribute('icon', intrinsic);
-    }
+  private release(host: IconHostWithStateObj): void {
+    if (!host.dataset[DATA_OWNED]) return;
+    host.style.color = '';
     delete host.dataset[DATA_OWNED];
   }
 }
+
+// Re-export so tests can spec it explicitly.
+export type { IconHost };

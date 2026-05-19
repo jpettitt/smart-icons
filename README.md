@@ -5,15 +5,18 @@ A Home Assistant addon that lets any entity's icon take its **color** and/or
 Jinja templates — applied across the default Lovelace cards without per-card
 configuration.
 
-> **Status:** v0.1 in progress. Both halves of the runtime are landed —
-> Python backend (integration, rule store, WebSocket API; 34 pytest tests)
-> and the TypeScript frontend (rule store, state watcher, shadow-piercing
-> painter; 23 Web Test Runner tests). The painter colors and glyph-swaps
-> icons live on the default dashboard, driven by rules over the WebSocket
-> API. The Door 2 management panel is still to come (chunk 2). See
-> [DESIGN.md](DESIGN.md) for architecture, [TODO.md](TODO.md) for the
-> punch list, [dev/README.md](dev/README.md) for the local HA dev container,
-> and [frontend/README.md](frontend/README.md) for the bundle build.
+> **Status:** v0.1 in progress, server-side glyph + client-side color
+> architecture landed. **Glyph swap** is computed in the Python
+> integration and written to `state.attributes.icon` — HA's native
+> templated-entity mechanism — so it survives every Lovelace re-render
+> and works in mobile apps and voice-display devices without any
+> additional code. **Color** is computed server-side too and carried on
+> a `smart_icons_color` attribute that a small frontend painter applies
+> as `style.color`. 96 tests (61 pytest, 35 Web Test Runner) green.
+> Door 2 management panel is the next chunk. See [DESIGN.md](DESIGN.md)
+> for architecture, [TODO.md](TODO.md) for the punch list,
+> [dev/README.md](dev/README.md) for the local HA dev container, and
+> [frontend/README.md](frontend/README.md) for the bundle build.
 
 ## What problem does it solve?
 

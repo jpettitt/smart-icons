@@ -18,6 +18,7 @@ import type { Hass } from './types';
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 30_000;
 
+
 async function waitForHass(): Promise<Hass> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -37,28 +38,19 @@ async function bootstrap(): Promise<void> {
 
   const rules = new RuleStore();
   const watcher = new StateWatcher(hass.connection);
-  const painter = new Painter(
-    () => rules.all(),
-    (id) => watcher.getState(id) ?? hass.states[id]?.state
-  );
+  const painter = new Painter();
 
-  await watcher.start(hass.states);
-  await rules.connect(hass.connection);
+  // Painter is state-driven: any source/target state change can affect
+  // a painted host's smart_icons_color attribute, so re-evaluate on each.
+  // The backend injector is the authority — we just bridge attribute →
+  // CSS color here. A blanket repaintAll() per change is fine (it's
+  // rAF-batched and per-host evaluation is O(1)).
+  watcher.onChange(() => painter.repaintAll());
 
-  // Any rule mutation invalidates every painted host — small enough to
-  // just repaint everything; the painter coalesces into a single rAF.
-  rules.subscribe(() => painter.repaintAll());
-
-  // State changes only matter when at least one rule's source is this entity.
-  // Quick filter then repaint; the painter handles per-host evaluation.
-  watcher.onChange((entityId) => {
-    for (const r of rules.all()) {
-      if (r.source === entityId) {
-        painter.repaintAll();
-        return;
-      }
-    }
-  });
+  // RuleStore is loaded for the panel UI (chunk 2) and to surface
+  // rule snapshots; the painter no longer reads it. Hydrate from
+  // localStorage so the panel has rules ready synchronously.
+  rules.hydrateFromCache();
 
   painter.start();
 
@@ -67,6 +59,16 @@ async function bootstrap(): Promise<void> {
     watcher,
     painter,
   };
+  // eslint-disable-next-line no-console
+  console.log('[smart-icons] painter started');
+
+  // Server sync happens in parallel; the painter will repaint as
+  // state_changed events flow in (each one carries the latest
+  // smart_icons_color attribute the injector wrote).
+  await Promise.all([
+    watcher.start(hass.states),
+    rules.connect(hass.connection),
+  ]);
   // eslint-disable-next-line no-console
   console.log('[smart-icons] ready', { rules: rules.all().length });
 }
