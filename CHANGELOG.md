@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.1 — 2026-05-19
+
+Bug-fix release. No new features, no schema changes — safe to upgrade
+in place.
+
+### Bug fixes
+
+- **Panel entity picker selection** — the Target / Source entity
+  fields rendered the dropdown correctly but the actual clickable area
+  collapsed to a thin band at the top of each list item, so most of
+  the row was unclickable. Switched to `ha-selector` with an
+  `entity` selector — the same dispatcher HA's own options flows use.
+  Hover and selection now work on the full row.
+
+### Internal
+
+- CI: bumped `actions/checkout` and `actions/setup-node` to v5
+  (Node 24 compatible) ahead of GitHub's September 2026 Node 20
+  removal.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.1.0...v0.1.1>
+
 ## v0.1.0 — 2026-05-19
 
 First release.
