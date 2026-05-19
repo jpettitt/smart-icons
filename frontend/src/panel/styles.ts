@@ -51,6 +51,11 @@ export const panelStyles = css`
     text-align: right;
     white-space: nowrap;
   }
+  .action-buttons {
+    display: inline-flex;
+    gap: 12px;
+    align-items: center;
+  }
   .empty {
     text-align: center;
     padding: 32px 16px;

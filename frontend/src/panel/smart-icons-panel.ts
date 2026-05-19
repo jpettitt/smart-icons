@@ -118,8 +118,11 @@ export class SmartIconsPanel extends LitElement {
         </td>
         <td>${rule.priority}</td>
         <td class="actions">
-          <mwc-button @click=${() => this.editRule(rule)}>Edit</mwc-button>
-          <mwc-button @click=${() => this.deleteRule(rule)}>Delete</mwc-button>
+          <div class="action-buttons">
+            <mwc-button @click=${() => this.editRule(rule)}>Edit</mwc-button>
+            <mwc-button @click=${() => this.duplicateRule(rule)}>Duplicate</mwc-button>
+            <mwc-button @click=${() => this.deleteRule(rule)}>Delete</mwc-button>
+          </div>
         </td>
       </tr>
     `;
@@ -129,7 +132,7 @@ export class SmartIconsPanel extends LitElement {
     return html`
       <ha-dialog
         open
-        heading=${this.editing ? 'Edit rule' : 'Add rule'}
+        heading=${this.dialogTitle}
         @closed=${this.cancelEdit}
       >
         <smart-icons-rule-editor
@@ -141,6 +144,20 @@ export class SmartIconsPanel extends LitElement {
         ></smart-icons-rule-editor>
       </ha-dialog>
     `;
+  }
+
+  /**
+   * Three dialog modes:
+   * - `editing === null`: fresh add (blank form, default title).
+   * - `editing` set and has an id: editing an existing rule.
+   * - `editing` set but `id === ''`: duplicate flow — same values
+   *   pre-filled, but on save the backend assigns a fresh ulid because
+   *   the serializer omits the id when it's empty.
+   */
+  private get dialogTitle(): string {
+    if (!this.editing) return 'Add rule';
+    if (!this.editing.id) return 'Duplicate rule';
+    return 'Edit rule';
   }
 
   // ---- store wiring ----
@@ -171,6 +188,16 @@ export class SmartIconsPanel extends LitElement {
 
   private editRule(rule: Rule): void {
     this.editing = rule;
+    this.editorError = '';
+    this.dialogOpen = true;
+  }
+
+  private duplicateRule(rule: Rule): void {
+    // Clone with id/created/updated cleared so the serializer treats it
+    // as a brand-new rule on save. The editor's hydrate() copies every
+    // other field, so the user lands on a pre-populated form ready to
+    // tweak (most commonly: change the target entity).
+    this.editing = { ...rule, id: '', created: '', updated: '' };
     this.editorError = '';
     this.dialogOpen = true;
   }

@@ -2,8 +2,17 @@
 
 ## v0.1.1 — 2026-05-19
 
-Bug-fix release. No new features, no schema changes — safe to upgrade
-in place.
+Patch release: a couple of UX papercuts in the panel. No schema
+changes — safe to upgrade in place.
+
+### What's new
+
+- **Duplicate button on each rule row.** New action between Edit and
+  Delete — pre-fills the rule editor with the source rule's values
+  but on save creates a fresh rule with a new id. Common workflow:
+  set up a rule for one entity, then duplicate it for several
+  similar entities, only changing the target. Dialog title reflects
+  the mode ("Edit rule" / "Duplicate rule" / "Add rule").
 
 ### Bug fixes
 
@@ -13,6 +22,9 @@ in place.
   the row was unclickable. Switched to `ha-selector` with an
   `entity` selector — the same dispatcher HA's own options flows use.
   Hover and selection now work on the full row.
+- **Rule row action buttons** — Edit / Delete were rendered with no
+  visible space between them; added 12 px of gap and the new
+  Duplicate button between them.
 
 ### Internal
 
