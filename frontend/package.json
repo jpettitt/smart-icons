@@ -1,0 +1,22 @@
+{
+  "name": "smart-icons-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Frontend bundle for the smart-icons Home Assistant integration.",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --target=es2022 --minify --outfile=../custom_components/smart_icons/static/smart_icons.js",
+    "watch": "esbuild src/index.ts --bundle --format=esm --target=es2022 --sourcemap --watch --outfile=../custom_components/smart_icons/static/smart_icons.js",
+    "typecheck": "tsc --noEmit",
+    "test": "wtr",
+    "test:watch": "wtr --watch"
+  },
+  "devDependencies": {
+    "@open-wc/testing": "^4.0.0",
+    "@types/mocha": "^10.0.10",
+    "@web/dev-server-esbuild": "^1.0.4",
+    "@web/test-runner": "^0.20.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

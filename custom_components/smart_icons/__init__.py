@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DATA_STORE, DOMAIN
+from .frontend import async_register_frontend
 from .store import RuleStore
 from .websocket_api import async_register_commands
 
@@ -32,6 +33,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # as the same handlers are registered, but a single config entry is
     # enforced by the config flow so this only ever runs once per session.
     async_register_commands(hass)
+
+    await async_register_frontend(hass)
 
     return True
 
