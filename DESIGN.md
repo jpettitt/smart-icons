@@ -345,8 +345,10 @@ Internally, `ha-state-icon` derives an mdi name and renders an inner
 - **Color** lives on the outer `ha-state-icon` (CSS `color` cascades into
   the SVG). Set `style.color`, done.
 - **Glyph** lives on the inner `<ha-icon>`'s `icon` attribute. Setting it
-  swaps the rendered SVG immediately. The parent may re-derive the icon on
-  the next state change, so we re-apply on each mutation.
+  swaps the rendered SVG immediately. The parent *may* re-derive the icon
+  on the next state change; we re-apply on each mutation. The full
+  validation plan is in [§ 7.6](#76-glyph-swap-validation-plan-poc) —
+  load-bearing for v0.2.
 
 By patching `ha-state-icon` we hit all of these for free. Cards that bypass
 it (custom SVG, image-with-overlay, etc.) are out of scope.
@@ -385,10 +387,26 @@ it (custom SVG, image-with-overlay, etc.) are out of scope.
 The inner `<ha-icon>` is a child of `ha-state-icon` and may be re-rendered
 when its parent's `stateObj` updates. Our observer's subtree watch catches
 those re-renders so we re-apply the override on the same animation frame.
+The [§ 7.6 PoC](#76-glyph-swap-validation-plan-poc) found that 2026.5
+*does not* re-derive on state change (case A), but the design retains the
+re-apply path because that behavior is internal to `ha-state-icon` and
+could regress in a future HA release.
 
 For glyph override specifically, we also remember the entity's *intrinsic*
 icon (what `ha-state-icon` would have rendered without us) so that on
 release we put exactly that back, not whatever was there a moment ago.
+
+**Shadow-root piercing.** Lovelace cards, the main view, and many `ha-*`
+components each have their own shadow roots; `MutationObserver` does not
+cross shadow boundaries automatically. The painter must attach a fresh
+observer on each shadow root it discovers (recursively, on observed
+`childList` mutations) so that `ha-state-icon` elements created inside
+*new* shadow trees — for example after navigating between dashboards,
+which fully tears down the previous view — get picked up. The PoC
+confirmed the navigation teardown: a per-host observer received no events
+when the host was detached, but the new host on return had no override
+applied. The high-rooted, shadow-piercing observer model in this section
+handles both cases uniformly.
 
 ### 7.3 Politeness
 
@@ -424,7 +442,125 @@ intended behavior — users opting into smart-icons want override. Document
 this prominently so theme authors don't file bugs.
 
 If a user wants their rule to *respect* dark mode, they can specify
-`var(--my-themed-var)` as the color and the theme stays in charge.
+`var(--my-themed-var)` as the color and the theme stays in charge. In v1
+this is a YAML-only path — the UI uses `ha-color-picker` which emits hex
+strings. The store and renderer accept any CSS color value regardless of
+which door entered it.
+
+### 7.6 Glyph-swap validation plan (PoC)
+
+[§ 7.1](#71-element-targeting) assumes the glyph swap can be implemented by
+setting the inner `<ha-icon>`'s `icon` attribute and re-applying on mutations.
+This is **load-bearing for the v0.2 glyph-swap feature** — if the parent
+`ha-state-icon` immediately re-derives synchronously after our write, the
+attribute-level mechanism is unwinnable and we need a different approach.
+
+This section captures the experiment that confirms which case we're in
+*before* we write the painter. Run once against a live HA; record the case
+and HA version below.
+
+**Result:** **Case A — clean** (HA 2026.5.2 in the dev container, macOS,
+2026-05-18). Manual override of the inner `<ha-icon>`'s `icon` attribute
+survived a state change on the target entity with **zero** parent-driven
+mutations on the observed shadow root. Color override via `style.color`
+on the outer host worked as expected. Dashboard navigation tore down the
+host element entirely (per-host observer received no events; a fresh host
+with the default glyph appeared on return) — this is normal DOM teardown,
+not a write-fight, and is handled by the painter rooting its
+`MutationObserver` higher per [§ 7.2](#72-the-painter). Case D and E
+ruled out by direct observation; C ruled out by the lack of any sync
+re-derive after `setAttribute`.
+
+#### 7.6.1 Setup
+
+1. Open the HA frontend in a browser, pick a visible target entity (a light
+   or sensor on the default Lovelace view works), and open a second tab on
+   the same HA so we can toggle the entity without losing DevTools focus.
+2. Open DevTools → Console. Paste the script below — do not refresh after.
+3. We can run against the Docker dev container or any existing HA install;
+   the script is read-only-ish (touches one icon, self-cleans on tab close).
+
+#### 7.6.2 Script (~25 lines)
+
+```js
+function deepQSA(root, sel) {
+  const out = []; const stack = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n.querySelectorAll) try { out.push(...n.querySelectorAll(sel)); } catch {}
+    if (n.shadowRoot) stack.push(n.shadowRoot);
+    for (const c of n.children || []) stack.push(c);
+  }
+  return out;
+}
+
+const TARGET_ID = "light.kitchen";  // change to a visible entity
+const host = deepQSA(document, "ha-state-icon")
+  .find(x => x.stateObj?.entity_id === TARGET_ID);
+if (!host) throw new Error(`no ha-state-icon for ${TARGET_ID}`);
+
+const inner = host.shadowRoot.querySelector("ha-icon");
+const orig = inner.getAttribute("icon");
+console.log("original icon:", orig);
+
+const mo = new MutationObserver(records => {
+  for (const r of records) {
+    console.log(performance.now().toFixed(1), r.type,
+      r.attributeName || "(child)", "→", inner?.getAttribute("icon"));
+  }
+});
+mo.observe(host.shadowRoot, { attributes: true, childList: true, subtree: true });
+
+inner.setAttribute("icon", "mdi:alert-octagon");
+console.log("forced override → mdi:alert-octagon. mo.disconnect() to stop.");
+window.__smartIconsPoc = { host, inner, orig, mo };
+```
+
+#### 7.6.3 Scenarios to drive
+
+1. **T+0 (immediately after paste).** Visual: icon should be the
+   alert-octagon. If it visually reverts within a few hundred ms, that's
+   case **C**.
+2. **Unrelated state change.** Toggle some *other* entity. Our icon should
+   not change; console should show no attribute mutations on `icon`.
+3. **Target state change.** Toggle the target entity from the other tab.
+   Does the parent rewrite `icon`? Within the same tick or async?
+4. **Theme flip.** Settings → Profile → toggle dark mode. Does the inner
+   icon survive?
+5. **Viewport churn.** Scroll the icon off-screen and back. Some cards
+   lazy-render and may rebuild the element.
+6. **Idle 30s.** Anything fire on its own?
+
+#### 7.6.4 Decision matrix
+
+| Observation | Case | Implication for [§ 7.2](#72-the-painter) |
+| --- | --- | --- |
+| Icon persists through all 6 scenarios, zero parent-driven `icon` mutations | **A — clean** | Apply once on element-discovery; observer only needs `childList` on `home-assistant-main` to catch new `ha-state-icon` instances. Cheapest path. |
+| Parent rewrites `icon` only during scenarios 3 / 5 (state change or rebuild) | **B — expected** | Current design works as drafted. Painter re-applies in the observer callback, coalesced to one `requestAnimationFrame`. |
+| Parent rewrites `icon` *synchronously after our `setAttribute`* in scenario 1 | **C — write-fight** | Attribute-level override is unwinnable. Fallbacks, in order of preference: **C1** monkey-patch `ha-state-icon.prototype` (its render or icon-deriving getter) to pre-empt derivation; **C2** replace the inner `<ha-icon>` with a wrapper that ignores parent writes; **C3** CSS `mask-image` overlay (no attribute touching, but harder to source mdi as SVG at runtime). |
+| Parent rebuilds the entire inner `<ha-icon>` element on state change | **D — element churn** | Observer needs `childList` on the shadow root, not just attributes; re-apply after every child mutation. Cache the original `icon` to compute revert on rule removal. Small extension of B. |
+| Inner `<ha-icon>` is somewhere other than `host.shadowRoot` (light-DOM, slotted) | **E — wrong tree** | [§ 7.1](#71-element-targeting)'s assumption is wrong. Painter targeting reworked to find the actual glyph element. Cheap fix, but invalidates the [§ 9.2](#92-frontend-typescript--bundled-to-one-js-file) painter sketch. |
+
+#### 7.6.5 Outcomes
+
+- **Case A or B**: keep [§ 7.2](#72-the-painter) as drafted; v0.2 glyph-swap
+  cleared to implement. Update the **Result** line above with the case and
+  HA version.
+- **Case C**: add a §7.7 documenting the chosen fallback (C1/C2/C3) and
+  reasoning; bump v0.2 "Icon glyph swap" complexity in
+  [§ 11.2](#v02--usable-for-early-adopters) and re-estimate.
+- **Case D**: amend [§ 7.2](#72-the-painter) painter loop to handle child
+  rebuilds; cache intrinsic icon for revert.
+- **Case E**: rewrite [§ 7.1](#71-element-targeting) targeting paragraph
+  before any painter code is written.
+
+#### 7.6.6 Time-box
+
+- Setup + script paste: 5 min.
+- Six scenarios: 15 min.
+- Case A or B: write up the **Result** line, done — ~30 min total.
+- Case C / D / E: another 1–2 hours characterizing the fallback, then stop
+  and re-design before continuing.
 
 ## 8. WebSocket API
 
@@ -435,7 +571,7 @@ All commands under the `smart_icons/` namespace, registered via
 | --- | --- | --- | --- |
 | `smart_icons/list` | snapshot of all rules | — | `{ rules: Rule[] }` |
 | `smart_icons/upsert` | add or update | `{ rule: Rule }` (id optional) | `{ id }` |
-| `smart_icons/delete` | remove by id | `{ id }` | `{ success: true }` |
+| `smart_icons/delete` | remove by id | `{ rule_id }` | `{ success: true }` |
 | `smart_icons/subscribe` | push updates | — | stream of `{ type: "added"\|"updated"\|"removed", rule, id }` |
 | `smart_icons/render_template` | preview Jinja | `{ template, variables? }` | `{ result, error? }` |
 | `smart_icons/version` | compat info | — | `{ integration, ha_version, schema_version }` |
@@ -507,16 +643,22 @@ smart-icons/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── esbuild.config.mjs
+│   ├── web-test-runner.config.mjs
 │   ├── src/                      (see § 9.2)
+│   ├── test/                     (open-wc/testing suites)
 │   └── dist/                     (built JS, committed for HACS)
-├── tests/
+├── tests/                        (pytest, backend)
 │   ├── conftest.py
 │   ├── test_store.py
 │   ├── test_websocket_api.py
 │   └── test_rule_validation.py
+├── dev/                          (developer environment, not shipped)
+│   ├── docker-compose.yml        (HA + bind-mounted integration)
+│   ├── configuration.yaml        (minimal HA config for dev)
+│   └── README.md                 (how to run, hot-reload notes)
 └── .github/
     └── workflows/
-        ├── ci.yml                (pytest + eslint + tsc + build)
+        ├── ci.yml                (pytest + eslint + tsc + wtr + build)
         └── release.yml           (tag → GH release + bundled zip)
 ```
 
@@ -536,11 +678,17 @@ smart-icons/
 
 ### v0.1 — proof of life (1–2 weekends)
 
+- [ ] **Dev environment**: `dev/docker-compose.yml` runs HA with this
+  repo's `custom_components/smart_icons/` bind-mounted and the built
+  frontend served. One `make dev` (or equivalent) to go from clone → live HA.
 - [ ] Python skeleton: integration, config flow, Store, WS `list/upsert/delete`
 - [ ] Frontend skeleton: RuleStore, StateWatcher, Painter
 - [ ] Modes: `thresholds`, `mapping` only (no template yet)
-- [ ] Panel (Door 2) — minimal table + add/edit/delete dialog
+- [ ] Panel (Door 2) — minimal table + add/edit/delete dialog, `ha-color-picker`
+  for color input
 - [ ] Auto-register frontend resource on setup
+- [ ] **Tests**: pytest for backend; `@open-wc/testing` + Web Test Runner
+  for the frontend (evaluator, rule-store, painter behavior). CI runs both.
 - [ ] Dogfood on author's dashboard for a week
 
 ### v0.2 — usable for early adopters
@@ -549,7 +697,8 @@ smart-icons/
 - [ ] Door 1 — entity settings dialog injection (with kill-switch)
 - [ ] Template mode + live preview pane in panel
 - [ ] Politeness layer (don't fight other plugins, per-property)
-- [ ] YAML loader (Door 3)
+- [ ] YAML loader (Door 3) — also the supported path for CSS variables and
+  named colors that the `ha-color-picker` UI doesn't expose
 - [ ] HACS manifest, packaging, screenshots
 - [ ] Translations: en, plus framework for community PRs
 
@@ -561,27 +710,27 @@ smart-icons/
 - [ ] Icon-glyph picker UI (browse mdi by category, search, recents)
 - [ ] Optional `opacity` decoration property
 
-## 12. Open questions
+## 12. Resolved questions
 
-1. **Panel placement.** Top-level sidebar entry vs. sub-page under
-   `Settings → Devices & services → Smart Icons`? The latter is more
-   conventional for a "service" integration; the former is more discoverable.
-   Lean: sub-page.
-2. **Per-user vs. per-install rules.** HA storage is per-install. Some
-   households may want "Alice's dashboard uses these colors, Bob's doesn't."
-   Out of scope for v1; could later add an optional `users: [...]` filter
-   evaluated client-side.
-3. **Color picker UX.** HA ships an `ha-color-picker` for lights (HS-based).
-   For arbitrary CSS strings we may need a small custom picker that supports
-   hex + named + `var()` input. Probably write our own.
-4. **What about icon `opacity`?** Trivial extension once we own `style`.
-   Defer to v0.3 unless a v0.1 user asks.
-5. **Bundle-as-Lovelace-resource vs. served-from-integration.** Serving from
-   the integration sidesteps "did you add the resource?" support load.
-   Trade-off: harder to ship via HACS without the Python side. Going with
-   integration-served; HACS install gets both halves.
-6. **Testing the frontend.** Lit + @open-wc/testing in CI? Or rely on manual
-   testing in HA dev container? Manual for v0.1, automated by v0.2.
+Decisions, kept here as a historical record. Cross-referenced into the
+relevant body sections; this list is for context, not authority.
+
+1. **Panel placement.** → Sub-page under `Settings → Devices & services →
+   Smart Icons`. More conventional for a "service" integration. Discoverability
+   handled by the entity-settings injection (Door 1).
+2. **Per-user vs. per-install rules.** → Per-install for v1. Optional
+   `users: [...]` filter may be added later if households actually ask.
+3. **Color picker UX.** → Use HA's built-in `ha-color-picker` (HS-based) and
+   serialize to hex on save. CSS variables (`var(--…)`) and named colors are
+   supported by the store + renderer, but in v1 they are entry-only via YAML
+   (Door 3, v0.2+). The custom-picker idea is parked.
+4. **Icon `opacity` property.** → Deferred to v0.3.
+5. **Bundle delivery.** → Served from the integration at
+   `/smart_icons_static/smart_icons.js`. HACS install gets both halves.
+6. **Frontend testing.** → `@open-wc/testing` (Web Test Runner) in CI from
+   **v0.1**, alongside a Docker-based HA dev container that auto-loads the
+   integration for integration / smoke testing. See [§ 11.1](#v01--proof-of-life-12-weekends)
+   and [§ 9.3](#93-repository-layout).
 
 ---
 

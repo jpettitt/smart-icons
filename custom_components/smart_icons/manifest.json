@@ -1,0 +1,12 @@
+{
+  "domain": "smart_icons",
+  "name": "Smart Icons",
+  "version": "0.1.0",
+  "documentation": "https://github.com/jpettitt/smart-icons",
+  "issue_tracker": "https://github.com/jpettitt/smart-icons/issues",
+  "codeowners": ["@jpettitt"],
+  "config_flow": true,
+  "dependencies": ["frontend", "websocket_api"],
+  "iot_class": "calculated",
+  "integration_type": "service"
+}

@@ -1,0 +1,5 @@
+# HA writes onboarding state, .storage, auth tokens, deps, logs, etc. here.
+# Keep only the seed configuration.yaml and this gitignore in version control.
+*
+!.gitignore
+!configuration.yaml

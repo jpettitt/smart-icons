@@ -1,0 +1,7 @@
+# Test deps for the Python integration.
+# pytest-homeassistant-custom-component pins a specific HA core version and
+# pulls it in transitively. Keep the pin loose so the suite tracks the
+# `:stable` Docker image we develop against; tighten before release.
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-homeassistant-custom-component

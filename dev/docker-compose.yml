@@ -1,0 +1,23 @@
+# Dev environment for smart-icons.
+#
+# Runs Home Assistant in a container with this repo's
+# `custom_components/smart_icons/` bind-mounted into `/config/custom_components/`,
+# so changes on the host show up after an HA restart. See `dev/README.md`
+# for the workflow.
+
+services:
+  homeassistant:
+    image: homeassistant/home-assistant:stable
+    container_name: smart-icons-ha
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    environment:
+      # Override by setting TZ in `dev/.env` or your shell before `docker compose up`.
+      - TZ=${TZ:-UTC}
+    volumes:
+      # Writable HA state: onboarding, .storage, auth, deps, logs.
+      # `ha_config/.gitignore` keeps everything but the seed out of git.
+      - ./ha_config:/config
+      # Live-edit mount for the integration. HA scans this on every restart.
+      - ../custom_components/smart_icons:/config/custom_components/smart_icons

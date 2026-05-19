@@ -1,0 +1,12 @@
+# Seed configuration for the smart-icons dev container.
+#
+# `default_config:` pulls in onboarding, frontend, history, energy, etc. —
+# everything needed to land on a usable dashboard after onboarding.
+
+default_config:
+
+# Verbose logging for our integration; trim once it stabilizes.
+logger:
+  default: info
+  logs:
+    custom_components.smart_icons: debug

@@ -5,8 +5,12 @@ A Home Assistant addon that lets any entity's icon take its **color** and/or
 Jinja templates — applied across the default Lovelace cards without per-card
 configuration.
 
-> **Status:** early design. No working code yet. See [DESIGN.md](DESIGN.md)
-> for the architecture, configuration model, and rendering approach.
+> **Status:** v0.1 in progress. The Python backend is in place — integration,
+> rule store, and WebSocket API, with 34 passing pytest tests and a Docker
+> dev container that auto-loads it. The frontend (panel, painter, state
+> watcher) is the next chunk. See [DESIGN.md](DESIGN.md) for architecture,
+> [TODO.md](TODO.md) for the punch list, and [dev/README.md](dev/README.md)
+> for how to spin up a local HA against the integration.
 
 ## What problem does it solve?
 

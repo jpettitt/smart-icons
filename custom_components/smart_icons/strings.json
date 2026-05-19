@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Icons",
+        "description": "Set up Smart Icons. There is nothing to configure here — rules are managed in the Smart Icons panel after install."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one Smart Icons instance can be configured."
+    }
+  }
+}

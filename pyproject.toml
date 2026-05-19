@@ -1,0 +1,16 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# pytest-homeassistant-custom-component installs HA core into the venv;
+# its own conftest mounts `tests/` and `custom_components/` correctly.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # asserts in tests are expected
