@@ -1,7 +1,12 @@
 # smart-icons — Design Document
 
-> **Status:** draft v0.1 — pre-implementation. Subject to change as we
-> prototype. Last revised 2026-05-18.
+> **Status:** v0.2.0b2 shipped (beta). v0.1 and v0.2 features are
+> implemented and in use; v0.3 work (template-mode evaluation, Door 1
+> entity-settings injection, YAML loader) is sketched in § 11 but not
+> started. This document mixes design intent with as-built notes —
+> § 11 (Roadmap) tracks what's actually done.
+>
+> Last substantive revision 2026-05-21 (admin-gating of WS + panel).
 
 ## 1. Motivation
 
@@ -61,35 +66,47 @@ mapping, template). Color and glyph are independent properties of a single
 │ HA Backend (Python integration)                                    │
 │                                                                    │
 │  custom_components/smart_icons/                                    │
-│    __init__.py        async_setup_entry, register WS, serve JS    │
-│    config_flow.py     trivial "click to install" config flow      │
-│    const.py           DOMAIN, STORAGE_KEY, STORAGE_VERSION        │
-│    store.py           Store wrapper, in-memory cache, migrations  │
-│    websocket_api.py   list / upsert / delete / subscribe / render │
-│    frontend.py        registers /smart_icons.js as Lovelace resrc │
-│    yaml_loader.py     (v0.2) read smart_icons: from config        │
+│    __init__.py         async_setup_entry, wire store/injector/WS  │
+│    config_flow.py      single-instance "click to install" flow    │
+│    const.py            DOMAIN, storage keys, ATTR_* constants     │
+│    rule.py             Rule dataclass + voluptuous validation     │
+│    store.py            Store wrapper, cache, subscriber fan-out   │
+│    evaluator.py        pure rule evaluation (thresholds/mapping)  │
+│    injector.py         state-changed subscriber, writes target    │
+│                        entities' attributes.icon + smart_icons_color│
+│    websocket_api.py    list / upsert / delete / subscribe / version│
+│                        (all admin-gated)                          │
+│    frontend.py         StaticPathConfig + add_extra_js_url +      │
+│                        async_register_built_in_panel (admin-only) │
+│    brand/              integration icon (icon.png, icon@2x.png)   │
+│    static/             built JS bundles (committed for HACS)      │
 │                                                                    │
 └──────────────────────────────┬─────────────────────────────────────┘
-                               │ websocket
+                               │ websocket (admin only)
 ┌──────────────────────────────┴─────────────────────────────────────┐
-│ HA Frontend (single JS bundle)                                     │
+│ HA Frontend — two bundles                                          │
 │                                                                    │
-│  src/                                                              │
-│    index.ts          bootstrap, wait for hass, wire components    │
-│    rule-store.ts     subscribes to WS; exposes reactive snapshot  │
-│    state-watcher.ts  subscribes to source entities' state_changed │
-│    evaluator.ts      pure: (rule, sourceState) → color | null     │
-│    painter.ts        MutationObserver + style.color application   │
-│    panel/            <smart-icons-panel> Lit element              │
-│    editor/           <smart-icons-rule-editor> reusable form      │
-│    dialog-inject.ts  patches entity-registry-settings render()    │
-│    compat.ts         HA version detection + feature flags         │
+│  smart_icons.js (~3 KB) — loaded on every Lovelace page            │
+│    index.ts          bootstrap watcher + painter, no WS calls     │
+│    state-watcher.ts  caches all state_changed; exposes attributes │
+│    painter.ts        shadow-piercing MutationObserver applies     │
+│                      smart_icons_color → style.color              │
+│    evaluator.ts      pure functions kept for future preview UI    │
+│                                                                    │
+│  smart_icons_panel.js (~60 KB) — lazy-loaded by the sidebar panel  │
+│    panel/index.ts            element-registration entry point     │
+│    panel/smart-icons-panel.ts  table view + Add/Edit/Duplicate/Del│
+│    panel/rule-editor.ts      Lit form (Apply to / React to /      │
+│                              Decoration / Options sections)       │
+│    panel/styles.ts           shared CSS, HA-themed via CSS vars   │
+│    rule-store.ts             WS client used only by the panel     │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-Single bundle, served by the integration. No HACS dependency, though we'll
-publish a HACS manifest for distribution.
+Two bundles, both served by the integration. Painter bundle is WS-free so
+non-admin users still see correctly painted icons on their dashboards;
+only the panel bundle talks to `smart_icons/*` WS commands.
 
 ## 4. Rule model
 
@@ -212,6 +229,7 @@ customElements.whenDefined("entity-registry-settings").then(() => {
 ```
 
 Constraints:
+
 - `render()` fires many times; the appended element must be stable across
   re-renders (Lit handles that as long as we return the same template
   shape).
@@ -615,7 +633,7 @@ window.__smartIconsPoc = { host, inner, orig, mo };
 | Parent rewrites `icon` only during scenarios 3 / 5 (state change or rebuild) | **B — expected** | Current design works as drafted. Painter re-applies in the observer callback, coalesced to one `requestAnimationFrame`. |
 | Parent rewrites `icon` *synchronously after our `setAttribute`* in scenario 1 | **C — write-fight** | Attribute-level override is unwinnable. Fallbacks, in order of preference: **C1** monkey-patch `ha-state-icon.prototype` (its render or icon-deriving getter) to pre-empt derivation; **C2** replace the inner `<ha-icon>` with a wrapper that ignores parent writes; **C3** CSS `mask-image` overlay (no attribute touching, but harder to source mdi as SVG at runtime). |
 | Parent rebuilds the entire inner `<ha-icon>` element on state change | **D — element churn** | Observer needs `childList` on the shadow root, not just attributes; re-apply after every child mutation. Cache the original `icon` to compute revert on rule removal. Small extension of B. |
-| Inner `<ha-icon>` is somewhere other than `host.shadowRoot` (light-DOM, slotted) | **E — wrong tree** | [§ 7.1](#71-element-targeting)'s assumption is wrong. Painter targeting reworked to find the actual glyph element. Cheap fix, but invalidates the [§ 9.2](#92-frontend-typescript--bundled-to-one-js-file) painter sketch. |
+| Inner `<ha-icon>` is somewhere other than `host.shadowRoot` (light-DOM, slotted) | **E — wrong tree** | [§ 7.1](#71-element-targeting)'s assumption is wrong. Painter targeting reworked to find the actual glyph element. Cheap fix, but invalidates the [§ 9.2](#92-frontend-typescript--two-bundles) painter sketch. |
 
 #### 7.6.5 Outcomes
 
@@ -624,7 +642,7 @@ window.__smartIconsPoc = { host, inner, orig, mo };
   HA version.
 - **Case C**: add a §7.7 documenting the chosen fallback (C1/C2/C3) and
   reasoning; bump v0.2 "Icon glyph swap" complexity in
-  [§ 11.2](#v02--usable-for-early-adopters) and re-estimate.
+  [§ 11.2](#v02--multi-target-glob-polish) and re-estimate.
 - **Case D**: amend [§ 7.2](#72-the-painter-color-only) painter loop to handle child
   rebuilds; cache intrinsic icon for revert.
 - **Case E**: rewrite [§ 7.1](#71-element-targeting) targeting paragraph
@@ -642,18 +660,21 @@ window.__smartIconsPoc = { host, inner, orig, mo };
 
 All commands under the `smart_icons/` namespace, registered via
 `websocket_api.async_register_command`. Schemas validated with voluptuous.
+**Every command is admin-gated** via `@websocket_api.require_admin`; a
+non-admin user gets an `unauthorized` error from each. The painter bundle
+does not call the WS API — it reads `smart_icons_color` from each entity's
+state attributes directly — so non-admin dashboards still render correctly.
 
 | Type | Purpose | Payload | Response |
 | --- | --- | --- | --- |
 | `smart_icons/list` | snapshot of all rules | — | `{ rules: Rule[] }` |
-| `smart_icons/upsert` | add or update | `{ rule: Rule }` (id optional) | `{ id }` |
+| `smart_icons/upsert` | add or update | `{ rule: Rule }` (id optional) | `{ id, rule }` |
 | `smart_icons/delete` | remove by id | `{ rule_id }` | `{ success: true }` |
 | `smart_icons/subscribe` | push updates | — | stream of `{ type: "added"\|"updated"\|"removed", rule, id }` |
-| `smart_icons/render_template` | preview Jinja | `{ template, variables? }` | `{ result, error? }` |
 | `smart_icons/version` | compat info | — | `{ integration, ha_version, schema_version }` |
 
-`render_template` reuses HA's existing template machinery; rate-limited
-per-connection to avoid editor abuse.
+A `smart_icons/render_template` command for live Jinja preview lands in
+v0.3 alongside template-mode evaluation.
 
 ## 9. Component breakdown
 
@@ -677,29 +698,34 @@ injection moved here from the frontend), plus boilerplate and tests.
 Heavy reuse of HA helpers; the novel logic is the injector's
 rule-source subscription bookkeeping.
 
-### 9.2 Frontend (TypeScript) — bundled to one JS file
+### 9.2 Frontend (TypeScript) — two bundles
+
+**Painter bundle (`smart_icons.js`, ~3 KB)** loaded on every Lovelace page
+via `add_extra_js_url`. Talks to HA's native state subscription only — no
+calls to `smart_icons/*` WS commands, so it works for every authenticated
+user regardless of admin status.
 
 | Module | Responsibility |
 | --- | --- |
-| `index.ts` | Wait for `<home-assistant>` to exist; bootstrap painter + watcher + rule store |
-| `rule-store.ts` | WS subscribe, expose `{ rules, byTarget(id), subscribe(cb), hydrateFromCache() }`; localStorage cache for instant panel display |
-| `state-watcher.ts` | Subscribe to all `state_changed`; emit per-entity change events to the painter |
+| `index.ts` | Wait for `<home-assistant>`; bootstrap watcher + painter. No WS API calls. |
+| `state-watcher.ts` | Subscribe to all `state_changed`; cache the full attribute bag per entity. Exposes `getAttribute(entityId, name)` so the painter avoids racing Lit's stateObj rebind. |
+| `painter.ts` | Color-only, state-driven. Shadow-piercing MutationObserver + catch-up scans; reads `smart_icons_color` from the watcher and applies `style.color`. |
 | `evaluator.ts` | Pure functions kept for future panel preview. **Not** wired into the painter (server-side injection handles applied evaluation); must stay semantically in sync with `evaluator.py`. |
-| `painter.ts` | Color-only, state-driven. Shadow-piercing MutationObserver + catch-up scans; reads `stateObj.attributes.smart_icons_color`, applies `style.color`. |
-| `panel/index.ts` | Entry point for the panel bundle (`smart_icons_panel.js`). Side-effect-imports the panel and editor elements so HA's custom-panel loader picks them up. |
-| `panel/smart-icons-panel.ts` | Sidebar panel: table of rules, add/edit/delete via WS, dialog wrapper. |
-| `panel/rule-editor.ts` | The reusable rule form. Section-grouped UI (Apply to / React to / Decoration / Options); HA pickers with `.label`; datalist + ha-icon fallbacks. |
-| `panel/styles.ts` | Shared CSS for the panel and editor, themed with HA's CSS variables. |
-| `panel/smart-icons-panel.ts` | `<smart-icons-panel>` — Lit page for Door 2 |
-| `panel/rule-table.ts` | Sortable/searchable rule list |
-| `panel/preview-pane.ts` | Live evaluator preview |
-| `editor/smart-icons-rule-editor.ts` | The reusable form (used by Doors 1 & 2) |
-| `dialog-inject.ts` | Door 1: monkey-patch `entity-registry-settings` |
-| `compat.ts` | Detect HA version; gate features; surface status to panel |
-| `ha-types.d.ts` | Local type stubs for HA internals we reference |
 
-Estimated size: **~1,500–2,000 lines** of TS, dominated by the panel UI.
-Build via `esbuild` → single ESM bundle, ~30–50 KB gzipped.
+**Panel bundle (`smart_icons_panel.js`, ~60 KB)** lazy-loaded by HA's
+custom-panel loader when the user opens the Smart Icons sidebar entry.
+Admin-only — non-admin users never see the entry.
+
+| Module | Responsibility |
+| --- | --- |
+| `panel/index.ts` | Entry point; side-effect imports register `<smart-icons-panel>` and `<smart-icons-rule-editor>`. |
+| `panel/smart-icons-panel.ts` | Sidebar page — rules table with Edit / Duplicate / Delete, action error banner, ha-dialog delete confirmation. Responsive layout via CSS container query. |
+| `panel/rule-editor.ts` | Lit form for one rule. Section-grouped (Apply to / React to / Decoration / Options); multi-entity selector + glob list with live "Matches N entities" preview; recorder-backed state autocomplete on mapping cells. |
+| `panel/styles.ts` | Shared CSS for the panel and editor, themed with HA's CSS variables. |
+| `rule-store.ts` | WS client — `smart_icons/list` + `smart_icons/subscribe`, plus localStorage cache for synchronous panel hydration. Used only by the panel bundle. |
+
+Build via `esbuild` → two ESM bundles. The split keeps the always-on
+bundle small enough that loading it on every Lovelace page is invisible.
 
 ### 9.3 Repository layout
 
@@ -765,7 +791,9 @@ smart-icons/
 
 ## 11. Roadmap
 
-### v0.1 — proof of life (1–2 weekends)
+### v0.1 — proof of life
+
+*Shipped 2026-05-19.*
 
 - [x] **Dev environment**: `dev/docker-compose.yml` runs HA with this
   repo's `custom_components/smart_icons/` bind-mounted.
@@ -775,40 +803,73 @@ smart-icons/
   — evaluator + injector run in Python; glyph swap rides HA's native
   `attributes.icon` mechanism. Frontend painter is color-only.
 - [x] Modes: `thresholds`, `mapping` (template accepted at storage
-  layer; runtime evaluation deferred to v0.2).
+  layer; runtime evaluation deferred to v0.3).
 - [x] Auto-register frontend resource on setup.
 - [x] Initial-paint polish: `localStorage` rule cache for the panel UI's
   synchronous hydration before the WS round trip.
-- [x] **Tests**: pytest for backend (61 tests across rule validation,
-  store, WS, evaluator, injector); `@open-wc/testing` + Web Test
-  Runner for the frontend (35 tests).
 - [x] Panel (Door 2) — sidebar entry; table + add/edit/delete dialog;
-  `ha-entity-picker` + `ha-icon-picker` (with `.label` set) plus
+  `ha-selector` + `ha-icon-picker` (with `.label` set) plus
   datalist/preview fallbacks; section-grouped form; source-attribute
   support.
-- [ ] CI workflow: pytest + tsc + wtr + build on PR.
-- [ ] Dogfood on author's dashboard for a week.
+- [x] CI workflow: pytest + tsc + wtr + build on PR.
 
-### v0.2 — usable for early adopters
+### v0.2 — multi-target, glob, polish
+
+*Shipped 2026-05-21 (beta).*
 
 - [x] **Icon glyph swap** alongside color (full decoration model from
-  § 4.1) — already landed in v0.1 via the server-side injector. Listed
-  here for historical accuracy; was originally targeted for v0.2.
-- [ ] Door 1 — entity settings dialog injection (with kill-switch)
-- [ ] Template mode + live preview pane in panel
-- [ ] Politeness layer (don't fight other plugins, per-property)
-- [ ] YAML loader (Door 3) — also the supported path for CSS variables and
-  named colors that the `ha-color-picker` UI doesn't expose
-- [ ] HACS manifest, packaging, screenshots
-- [ ] Translations: en, plus framework for community PRs
+  § 4.1) — landed in v0.1 via the server-side injector.
+- [x] **Multi-target rules** — `targets: [...]` list; auto-migrates legacy
+  `target: <entity_id>` on load.
+- [x] **Glob target patterns** — `*`, `?`, `[set]` resolved against
+  `hass.states` at apply time. Newly-added entities matching an existing
+  glob pick up the rule via an `entity_registry_updated` listener; entities
+  appearing post-restart (when their owning integration hasn't published
+  state yet at integration setup time) are caught via a `state_changed`
+  listener filtered for `old_state is None`.
+- [x] **Per-target source semantics** — multi-target/glob rules with no
+  explicit source default to each target reacting to its own state and
+  `source_attribute`.
+- [x] **Mapping-state autocomplete** — recorder-backed `<datalist>` of
+  states the source entity has been observed in over the last 7 days,
+  plus its current state.
+- [x] **Admin-gating** — both WS API and panel registration are
+  admin-only ([§ 8](#8-websocket-api)). Painter bundle is WS-free so
+  non-admin dashboards still render painted icons correctly.
+- [x] **Rule editor UX overhaul** — section-grouped layout, sticky save
+  bar, inline validation errors, Duplicate action, reorderable threshold
+  entries, ha-dialog delete confirmation.
+- [x] **Responsive panel** — container-query-driven card-stack layout
+  that correctly tracks the HA sidebar (where viewport-based media
+  queries miss it).
+- [x] **Painter color race fix** — StateWatcher caches the full attribute
+  bag synchronously; painter reads from there instead of from
+  `host.stateObj`, eliminating the Lit-render-timing race.
+- [x] HACS manifest. Integration icon via the brands-proxy convention
+  (`custom_components/smart_icons/brand/`).
 
-### v0.3+ — polish
+### v0.3 — template mode + Door 1
+
+- [ ] **Template mode evaluation** — Jinja rendered server-side via HA's
+  template machinery; `smart_icons/render_template` WS command for the
+  panel's live preview, rate-limited per connection.
+- [ ] **Door 1** — entity settings dialog injection with a kill-switch,
+  so individual entity pages get a "Smart Icon" section.
+- [ ] **YAML loader** (Door 3) — `smart_icons:` block; the supported path
+  for CSS variables and named colors the `ha-color-picker` UI doesn't
+  expose.
+- [ ] Translations — en plus framework for community PRs.
+
+### v0.4+ — polish
 
 - [ ] Drag-reorder priority in panel
 - [ ] Import/export YAML
 - [ ] "Suggest a rule" wizard (pick target, pick source, pick mode by type)
-- [ ] Icon-glyph picker UI (browse mdi by category, search, recents)
 - [ ] Optional `opacity` decoration property
+- [ ] Politeness layer — per-property stand-down when other plugins own
+  `style.color`
+- [ ] Caching of resolved glob-target sets ([§ 9.1](#91-backend-python--custom_componentssmart_icons)
+  pre-check is O(rules × globs × all-entities) per state change; cache + invalidate on rule + registry events).
 
 ## 12. Resolved questions
 
@@ -833,7 +894,7 @@ relevant body sections; this list is for context, not authority.
    `/smart_icons_static/smart_icons.js`. HACS install gets both halves.
 6. **Frontend testing.** → `@open-wc/testing` (Web Test Runner) in CI from
    **v0.1**, alongside a Docker-based HA dev container that auto-loads the
-   integration for integration / smoke testing. See [§ 11.1](#v01--proof-of-life-12-weekends)
+   integration for integration / smoke testing. See [§ 11.1](#v01--proof-of-life)
    and [§ 9.3](#93-repository-layout).
 
 ---
