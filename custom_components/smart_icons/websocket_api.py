@@ -3,6 +3,13 @@
 Five commands under the `smart_icons/` namespace (see DESIGN.md § 8).
 v0.1 ships list / upsert / delete / subscribe / version. The
 `render_template` command lands in v0.2 alongside template-mode evaluation.
+
+All commands are admin-gated via `@websocket_api.require_admin`. The
+panel that drives them is also admin-only (see `frontend.py`), so
+rule management is an admin concern by design. Non-admin users still
+see painted icons on their dashboards because the painter reads
+`smart_icons_color` directly from each entity's state attributes —
+that data path doesn't traverse our WS API at all.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ def _store(hass: HomeAssistant):
 
 
 @callback
+@websocket_api.require_admin
 @websocket_api.websocket_command({vol.Required("type"): WS_LIST})
 def _ws_list(
     hass: HomeAssistant,
@@ -52,6 +60,7 @@ def _ws_list(
     connection.send_result(msg["id"], {"rules": rules})
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_UPSERT,
@@ -72,6 +81,7 @@ async def _ws_upsert(
     connection.send_result(msg["id"], {"id": rule.id, "rule": rule.to_dict()})
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_DELETE,
@@ -94,6 +104,7 @@ async def _ws_delete(
 
 
 @callback
+@websocket_api.require_admin
 @websocket_api.websocket_command({vol.Required("type"): WS_SUBSCRIBE})
 def _ws_subscribe(
     hass: HomeAssistant,
@@ -118,6 +129,7 @@ def _ws_subscribe(
 
 
 @callback
+@websocket_api.require_admin
 @websocket_api.websocket_command({vol.Required("type"): WS_VERSION})
 def _ws_version(
     hass: HomeAssistant,

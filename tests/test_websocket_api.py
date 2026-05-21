@@ -113,3 +113,34 @@ async def test_version(hass, hass_ws_client, config_entry):  # noqa: ARG001
     assert resp["result"]["integration"] == INTEGRATION_VERSION
     assert "ha_version" in resp["result"]
     assert resp["result"]["schema_version"] == 1
+
+
+@pytest.mark.parametrize(
+    ("payload", "label"),
+    [
+        ({"id": 1, "type": WS_LIST}, "list"),
+        (
+            {"id": 1, "type": WS_UPSERT, "rule": _mapping_rule_payload()},
+            "upsert",
+        ),
+        ({"id": 1, "type": WS_DELETE, "rule_id": "01NOPE"}, "delete"),
+        ({"id": 1, "type": WS_SUBSCRIBE}, "subscribe"),
+        ({"id": 1, "type": WS_VERSION}, "version"),
+    ],
+)
+async def test_non_admin_user_gets_unauthorized(
+    hass,
+    hass_ws_client,
+    hass_read_only_access_token,
+    config_entry,  # noqa: ARG001
+    payload,
+    label,  # noqa: ARG001 — purely for nicer pytest IDs
+):
+    """All five WS commands are admin-gated via @websocket_api.require_admin.
+    A read-only user authenticated to HA still gets `unauthorized` from each
+    one. Confirms the panel-level admin guard is also enforced at the API."""
+    ws = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await ws.send_json(payload)
+    resp = await ws.receive_json()
+    assert resp["success"] is False
+    assert resp["error"]["code"] == "unauthorized"

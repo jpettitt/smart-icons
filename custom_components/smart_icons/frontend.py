@@ -84,7 +84,13 @@ async def async_register_frontend(hass: HomeAssistant) -> bool:
                     "trust_external": False,
                 }
             },
-            require_admin=False,
+            # Admin-only: rule management mutates the appearance of every
+            # entity across the install. Non-admin users still see the
+            # results on their dashboards (the painter reads
+            # `smart_icons_color` from each entity's state attributes,
+            # which doesn't go through our WS API), they just can't
+            # author rules. Matches the admin-gated WS commands.
+            require_admin=True,
         )
         _LOGGER.debug("Smart Icons panel registered at /%s", PANEL_URL_PATH)
     else:
