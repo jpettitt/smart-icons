@@ -1,11 +1,22 @@
 /**
  * Color painter for `<ha-state-icon>` hosts.
  *
- * Reads each host's `stateObj.attributes.smart_icons_color` and applies
- * it as inline `style.color`. The backend `IconInjector` is responsible
- * for computing the value (server-side rule evaluation against the
- * source entity); the painter is just the local DOM-side bridge that
- * turns the attribute into an actual CSS color.
+ * Reads each painted entity's `smart_icons_color` attribute from a
+ * `StateWatcher` cache and applies it as inline `style.color`. The
+ * backend `IconInjector` is responsible for computing the value
+ * (server-side rule evaluation against the source entity); the painter
+ * is just the local DOM-side bridge that turns the attribute into an
+ * actual CSS color.
+ *
+ * Why not read from the host's own `stateObj.attributes`?
+ * On a `state_changed` event, our painter and HA's card Lit re-renders
+ * are both microtask-scheduled in the same tick, and there's no
+ * ordering guarantee. If the painter's microtask runs before the
+ * card's, `host.stateObj` is still the previous snapshot — we paint
+ * with stale data and the color appears stuck until the next
+ * remount (dashboard switch, hard reload). Reading from StateWatcher
+ * — which is updated synchronously inside the event dispatch, before
+ * any microtask runs — removes that race.
  *
  * Icon glyph swap is NOT done here — that runs entirely server-side via
  * the standard `attributes.icon` mechanism that templated entities use.
@@ -17,6 +28,7 @@
  * DESIGN.md § 7.2.
  */
 
+import type { StateWatcher } from './state-watcher';
 import type { IconHost } from './types';
 import { SMART_ICONS_COLOR_ATTR } from './types';
 
@@ -38,6 +50,13 @@ export class Painter {
   private running = false;
   private repaintScheduled = false;
   private catchupTimers: ReturnType<typeof setTimeout>[] = [];
+
+  /** Optional state cache. When provided, the painter reads
+   *  smart_icons_color from here instead of host.stateObj — see the
+   *  module-level comment for why this matters. Tests that don't need
+   *  the racy real-world timing can omit it and fall back to host
+   *  reads (so existing painter unit tests keep working). */
+  constructor(private readonly watcher?: StateWatcher) {}
 
   start(root: Document | ShadowRoot = document): void {
     if (this.running) return;
@@ -134,10 +153,18 @@ export class Painter {
     const entityId = host.stateObj?.entity_id;
     if (!entityId) return;
 
-    const attrs = host.stateObj?.attributes;
-    const color = (attrs?.[SMART_ICONS_COLOR_ATTR] ?? null) as string | null;
+    // Prefer the StateWatcher cache when wired up (production). It
+    // tracks the connection-layer truth synchronously, so we don't
+    // race Lit's stateObj rebind. Fall back to host.stateObj for
+    // tests that construct a bare Painter() without a watcher.
+    const color = (this.watcher
+      ? this.watcher.getAttribute(entityId, SMART_ICONS_COLOR_ATTR)
+      : host.stateObj?.attributes?.[SMART_ICONS_COLOR_ATTR]) as
+      | string
+      | null
+      | undefined;
 
-    if (color != null) {
+    if (color != null && color !== '') {
       if (host.style.color !== color) host.style.color = color;
       host.dataset[DATA_OWNED] = 'color';
     } else if (host.dataset[DATA_OWNED]) {

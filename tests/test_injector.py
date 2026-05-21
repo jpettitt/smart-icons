@@ -434,6 +434,59 @@ async def test_injector_per_target_with_source_attribute(
     )
 
 
+async def test_injector_applies_glob_rule_to_entities_appearing_after_startup(
+    hass, config_entry  # noqa: ARG001
+):
+    """On HA restart, a glob rule's target entities may not exist in the
+    state machine when the integration starts (their owning integration
+    is still loading). When those entities later appear, the injector
+    must catch them and apply the rule — otherwise the user sees default
+    icons and colors until they bounce a dashboard.
+
+    Reproduces the bug by:
+      1. Storing a glob rule when no matching entities exist.
+      2. Letting the entity appear later via async_set.
+      3. Asserting the smart_icons_color attribute is written.
+    """
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    # Store the glob rule BEFORE any matching entity exists — mirrors
+    # the restart sequence where Smart Icons loads before the lock
+    # integration publishes its entities.
+    await store.async_upsert(
+        {
+            "targets": ["lock.*"],
+            "mode": "mapping",
+            "mapping": {
+                "locked": {"color": "#00ff00", "icon": "mdi:lock"},
+                "unlocked": {"color": "#ff0000", "icon": "mdi:lock-open"},
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    # No matching entity yet.
+    assert hass.states.get("lock.front_door") is None
+
+    # Now the entity appears for the first time — simulates the
+    # lock integration finally publishing its state.
+    hass.states.async_set("lock.front_door", "locked")
+    await hass.async_block_till_done()
+
+    state = hass.states.get("lock.front_door")
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#00ff00"
+    assert state.attributes[ATTR_ICON] == "mdi:lock"
+
+    # And subsequent state changes on this entity now trigger
+    # re-evaluation — proves the subscription was rebuilt.
+    hass.states.async_set("lock.front_door", "unlocked")
+    await hass.async_block_till_done()
+
+    state = hass.states.get("lock.front_door")
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#ff0000"
+    assert state.attributes[ATTR_ICON] == "mdi:lock-open"
+
+
 async def test_injector_no_op_when_rule_disabled(
     hass, config_entry  # noqa: ARG001
 ):
