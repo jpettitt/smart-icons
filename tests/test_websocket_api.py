@@ -11,6 +11,7 @@ from custom_components.smart_icons.const import (
     WS_UPSERT,
     WS_VERSION,
 )
+from custom_components.smart_icons.websocket_api import INTEGRATION_VERSION
 
 
 def _mapping_rule_payload(**overrides):
@@ -107,6 +108,8 @@ async def test_version(hass, hass_ws_client, config_entry):  # noqa: ARG001
     await ws.send_json({"id": 1, "type": WS_VERSION})
     resp = await ws.receive_json()
     assert resp["success"] is True
-    assert resp["result"]["integration"] == "0.1.0"
+    # Compare against the canonical source so the test stays in sync with
+    # the version bump rather than being a separate string to maintain.
+    assert resp["result"]["integration"] == INTEGRATION_VERSION
     assert "ha_version" in resp["result"]
     assert resp["result"]["schema_version"] == 1
