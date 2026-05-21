@@ -35,7 +35,14 @@ for the full list. Highlights:
 - Integration icon (`brand/icon.png`, `icon@2x.png`) following HA's
   brands-proxy convention.
 
-## v0.3 — template mode + Door 1 (next)
+## v0.2.1 — point release (next)
+
+- [ ] **YAML editing — phase 1.** "Copy as YAML" per rule (read-only
+  modal); "Import YAML" on panel header; accepts single rule or
+  `rules:` list. Targets the "share a rule as a gist" use case.
+  Full design: [`docs/yaml-editing.md`](docs/yaml-editing.md).
+
+## v0.3 — template mode, Door 1, in-editor YAML
 
 Open items, in roughly priority order:
 
@@ -46,15 +53,15 @@ Open items, in roughly priority order:
   so individual entity pages get a "Smart Icon" section. Verify the
   `entity-registry-settings` element name and shape against current HA
   frontend source before committing to the implementation approach.
-- [ ] **YAML loader** (Door 3) — `smart_icons:` block in
-  `configuration.yaml`. The supported path for CSS variables and named
-  colors that the `ha-color-picker` UI doesn't expose.
+- [ ] **YAML editing — phases 2 & 3.** "Edit in YAML" toggle in the
+  rule editor (HA automation-editor pattern); "Export all rules";
+  Append / Replace toggle on bulk import.
+  See [`docs/yaml-editing.md`](docs/yaml-editing.md).
 - [ ] Translations — en plus framework for community PRs.
 
 ## v0.4+ — polish
 
 - [ ] Drag-reorder priority in panel.
-- [ ] Import/export YAML.
 - [ ] "Suggest a rule" wizard (pick target, pick source, pick mode by
   type).
 - [ ] Optional `opacity` decoration property.
@@ -66,7 +73,6 @@ Open items, in roughly priority order:
 - [ ] Investigate color-update latency on rule edit (~1 s observed
   2026-05-19; icon updates are instant because they ride HA's native
   state-changed path, color goes through the frontend painter).
-- [ ] Promote v0.2 from beta to GA after dogfood feedback.
 
 ## Followups & ideas (parking lot)
 
