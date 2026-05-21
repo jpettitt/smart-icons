@@ -1,5 +1,122 @@
 # Changelog
 
+## v0.2.0 — 2026-05-21
+
+First general-availability release of the v0.2 line. Rolls up everything
+from `v0.2.0b1` and `v0.2.0b2` and adds the admin-gating work that landed
+after b2. Existing v0.1.x rules keep working — the singular
+`target: <entity_id>` form is auto-migrated to the new
+`targets: [<entity_id>]` list on load.
+
+### Highlights
+
+- **Multi-target rules + glob target patterns.** One rule can apply to
+  many entities at once, either as a literal list (`targets: [...]`) or
+  shell-style globs (`light.kitchen_*`, `sensor.temp_?`). The panel
+  shows live "Matches N entities" previews as you type a glob.
+- **Per-target source semantics.** For a multi-target or glob rule
+  with no explicit `source`, each matched target reacts to its **own**
+  state and `source_attribute`. One rule, every kitchen light colored
+  by its own brightness.
+- **Mapping-state autocomplete.** Each mapping-key cell now offers a
+  `<datalist>` of states the source entity has been observed in over
+  the last seven days, sourced from the recorder. Falls back to the
+  entity's current state when the recorder is disabled.
+- **Admin-only management.** Both the WebSocket API and the sidebar
+  panel are admin-gated. Non-admin users still see correctly painted
+  icons on their dashboards because the painter bundle reads
+  `smart_icons_color` directly from each entity's state attributes —
+  no WS calls.
+- **Painter color race fixed.** The painter now reads
+  `smart_icons_color` from a synchronously-updated `StateWatcher`
+  cache instead of from each host's `stateObj`, eliminating the
+  Lit-render-timing race that previously made colors appear stuck
+  until the user navigated away and back.
+- **Glob rules survive HA restart.** Entities whose owning integration
+  publishes them seconds after Smart Icons loads (the classic
+  post-restart case for MQTT / lock / matter) are now caught by a
+  `state_changed` listener filtered on `old_state is None` and the
+  matching glob rule is applied immediately.
+- **Responsive panel layout.** The rules table reformats as a labeled
+  card stack on narrow widths via a CSS container query against the
+  panel card — which correctly tracks the HA sidebar opening
+  and closing (where viewport-based media queries miss it).
+- **Rule editor UX overhaul.** Section-grouped layout (Apply to /
+  React to / Decoration / Options), inline error placement, sticky
+  save bar, validation-gated Save button, Duplicate action,
+  reorderable threshold entries (↑ / ↓), and an HA-native dialog-style
+  delete confirmation. Action error banner for toggle/delete failures.
+- **Integration icon.** Painted-favicon brand mark under
+  `custom_components/smart_icons/brand/` following HA's brands-proxy
+  convention (HA 2026.3+) — no manifest changes needed; the icon
+  shows up automatically in Settings → Devices & services and HACS.
+
+### Configuration example
+
+A glob + per-target rule that recolors every kitchen light by its own
+brightness:
+
+```jsonc
+{
+  "targets": ["light.kitchen_*"],
+  "source_attribute": "brightness",
+  "mode": "thresholds",
+  "thresholds": [
+    { "lt": 64,  "color": "#552200" },
+    { "lt": 192, "color": "#ffaa00" },
+    {            "color": "#ffffaa" }
+  ]
+}
+```
+
+(Note the absence of `source` — per-target semantics: each kitchen
+light reacts to its own `brightness`.)
+
+### Schema migration
+
+`v0.1.x` rules used a singular `target: <entity_id>` field. Those are
+auto-migrated to `targets: [<entity_id>]` on load — no manual
+intervention needed. New rules are written in canonical
+`targets: [...]` form. The legacy field is still accepted at the
+storage layer through v0.x for back-compat; removal is scheduled
+for v1.0.
+
+### Internals
+
+- `manifest.json` declares `min_ha_version: "2024.7"` (the
+  `StaticPathConfig` requirement).
+- Painter bundle shrunk 4.4 KB → 3.3 KB after removing the
+  `RuleStore` from the always-on bundle — only the panel bundle
+  talks to the WS API now.
+- All `mwc-*` elements migrated to `ha-*` (`ha-button` with
+  `variant=brand|neutral|danger`). `mwc-button` is unregistered
+  in modern HA and renders as an invisible unknown element.
+- `ha-selector` (HA's options-flow dispatcher) replaces direct
+  `ha-entity-picker` use — fixes a click-area bug in dialog contexts.
+- WS version endpoint now reads `homeassistant.__version__`
+  directly instead of allocating a config dict per call.
+- `store.async_load` exception catch narrowed to
+  `(vol.Invalid, ValueError)` so unrelated bugs surface in the log.
+- Misc dead-code cleanup (`_LOGGER`, `asdict`, `field`, an unused
+  `validity-changed` event from an abandoned earlier approach).
+- 86 pytest + 36 Web Test Runner tests green; typecheck clean.
+
+### Upgrading from v0.1.x
+
+Drop-in. No manual migration. After updating, restart HA. Existing
+rules keep working and the singular-`target` form is rewritten to
+`targets: [...]` on first load.
+
+### Known limitations (unchanged from v0.1.1)
+
+- Template-mode rules are stored but not evaluated at runtime —
+  v0.3 work.
+- Releasing a rule clears the color override but leaves the last
+  injected icon on the target's state until the source integration
+  pushes a fresh state update.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.1.1...v0.2.0>
+
 ## v0.2.0b2 — 2026-05-21
 
 Second beta. Three fixes from real-world use of v0.2.0b1.

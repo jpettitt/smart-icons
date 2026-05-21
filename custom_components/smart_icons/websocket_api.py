@@ -32,7 +32,7 @@ from .const import (
 )
 from .rule import Rule
 
-INTEGRATION_VERSION = "0.2.0b2"
+INTEGRATION_VERSION = "0.2.0"
 
 
 def async_register_commands(hass: HomeAssistant) -> None:
