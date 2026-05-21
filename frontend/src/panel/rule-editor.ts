@@ -52,6 +52,14 @@ export class SmartIconsRuleEditor extends LitElement {
 
   @state() private working: WorkingState = this.blankState();
 
+  /** Per-mapping-row autocomplete: states the resolved source entity
+   *  has been observed in (recorder history) plus its current state.
+   *  Keyed in `_observedStatesCache` by entity id so we don't re-query
+   *  on every render. */
+  @state() private observedStates: readonly string[] = [];
+  private _observedStatesCache = new Map<string, readonly string[]>();
+  private _observedStatesEntityId = '';
+
   override connectedCallback(): void {
     super.connectedCallback();
     // HA's pickers are lazy-loaded; re-render when they land so plain
@@ -75,6 +83,82 @@ export class SmartIconsRuleEditor extends LitElement {
     if (changed.has('rule')) {
       this.working = this.rule ? this.hydrate(this.rule) : this.blankState();
     }
+    // Keep the observed-states datalist in sync with whichever entity
+    // is currently driving evaluation. For explicit-source rules
+    // that's `working.source`; for per-target rules it's the first
+    // literal target (mapping authors typically want to see the
+    // states a representative entity has been in).
+    const effectiveSource = this.observedSourceForAutocomplete();
+    if (effectiveSource !== this._observedStatesEntityId) {
+      this._observedStatesEntityId = effectiveSource;
+      void this.refreshObservedStates(effectiveSource);
+    }
+  }
+
+  /** Entity id we'll query for the mapping-key autocomplete. Empty
+   *  when nothing is selected yet — caller should bail. */
+  private observedSourceForAutocomplete(): string {
+    const explicit = this.working.source.trim();
+    if (explicit) return explicit;
+    return this.working.targetEntities[0] || '';
+  }
+
+  /** Populate `observedStates` for `entityId`. Queries the recorder
+   *  for the last 7 days of distinct state values, merges in the
+   *  current state, and caches the result. Quiet failure: if the
+   *  recorder is disabled or the call fails we still get the
+   *  current state as a one-element list. */
+  private async refreshObservedStates(entityId: string): Promise<void> {
+    if (!entityId || !this.hass) {
+      this.observedStates = [];
+      return;
+    }
+    const cached = this._observedStatesCache.get(entityId);
+    if (cached) {
+      this.observedStates = cached;
+      return;
+    }
+
+    const current = this.hass.states[entityId]?.state;
+    // Optimistic: show the current state immediately so the datalist
+    // isn't empty while we wait for the recorder round-trip.
+    if (current) this.observedStates = [current];
+
+    const seen = new Set<string>();
+    if (current) seen.add(current);
+
+    try {
+      const end = new Date();
+      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const result = await this.hass.connection.sendMessagePromise<
+        Record<string, Array<{ s?: string; state?: string }>>
+      >({
+        type: 'history/history_during_period',
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        entity_ids: [entityId],
+        minimal_response: true,
+        no_attributes: true,
+        // History API normalizes its row shape under minimal_response
+        // to `{ s, lu }`; older HA versions return full `{ state, last_updated }`.
+      });
+      const series = result?.[entityId];
+      if (Array.isArray(series)) {
+        for (const row of series) {
+          const value = row.s ?? row.state;
+          if (typeof value === 'string' && value) seen.add(value);
+        }
+      }
+    } catch {
+      // Recorder disabled or component unavailable — keep whatever we
+      // already had from `hass.states`.
+    }
+    // Skip stale results: if the user changed entity while the call
+    // was in flight, don't overwrite the newer suggestions.
+    if (entityId !== this._observedStatesEntityId) return;
+    const list = [...seen].sort();
+    this._observedStatesCache.set(entityId, list);
+    this.observedStates = list;
   }
 
   /**
@@ -178,6 +262,11 @@ export class SmartIconsRuleEditor extends LitElement {
       <datalist id="smart-icons-source-attributes">
         ${this.sourceAttributes.map(
           (a) => html`<option value=${a}></option>`
+        )}
+      </datalist>
+      <datalist id="smart-icons-observed-states">
+        ${this.observedStates.map(
+          (s) => html`<option value=${s}></option>`
         )}
       </datalist>
 
@@ -521,12 +610,20 @@ export class SmartIconsRuleEditor extends LitElement {
               fallback. Each entry can set a color, an icon, or both.
             </p>`
           : null}
+        ${this.observedStates.length > 0
+          ? html`<p class="fieldset-hint">
+              Autocomplete suggests states
+              <code>${this._observedStatesEntityId}</code> has been in
+              recently (last 7 days, via recorder).
+            </p>`
+          : null}
         ${entries.map(
           (m, idx) => html`
             <div class="row">
               <input
                 type="text"
                 placeholder="state"
+                list="smart-icons-observed-states"
                 .value=${m.key}
                 @input=${(e: Event) =>
                   this.updateMapping(idx, {

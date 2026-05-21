@@ -144,4 +144,29 @@ describe('Painter', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(icon.style.color).to.equal('blue');
   });
+
+  it('reads color from the watcher cache, not the host stateObj', () => {
+    // Simulate the real-world race: card's stateObj is still the OLD
+    // snapshot (Lit hasn't re-rendered yet), but the watcher cache —
+    // updated synchronously inside the state_changed dispatch — has
+    // the new color. Painter should use the watcher's value.
+    host = makeTileCard('light.race', { smart_icons_color: 'navy' });
+    document.body.appendChild(host);
+
+    const fakeWatcher = {
+      getAttribute(entityId: string, name: string): unknown {
+        if (entityId === 'light.race' && name === 'smart_icons_color') {
+          return 'crimson';
+        }
+        return undefined;
+      },
+    };
+
+    painter = new Painter(
+      fakeWatcher as unknown as ConstructorParameters<typeof Painter>[0]
+    );
+    painter.start();
+
+    expect(getStateIcon(host).style.color).to.equal('crimson');
+  });
 });

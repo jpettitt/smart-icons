@@ -32,7 +32,7 @@ import fnmatch
 from collections.abc import Callable
 from typing import Any
 
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 
@@ -57,6 +57,7 @@ class IconInjector:
         self._unsub_store: Callable[[], None] | None = None
         self._unsub_state: Callable[[], None] | None = None
         self._unsub_registry: Callable[[], None] | None = None
+        self._unsub_new_entity: Callable[[], None] | None = None
         self._tracked_sources: set[str] = set()
         # Targets we've written into, so we can release color cleanly on
         # rule removal. Icon is left as-is per the trade-off above.
@@ -76,6 +77,17 @@ class IconInjector:
         self._unsub_registry = self._hass.bus.async_listen(
             "entity_registry_updated", self._on_entity_registry_event
         )
+        # Catch entities that didn't exist when we started but appear
+        # later. The classic case is HA restart: integrations like
+        # MQTT / Zigbee / lock owners publish their entities seconds
+        # after our integration loads. Glob rules need to re-resolve
+        # when each new entity arrives — otherwise the user has to
+        # bounce a dashboard before colors apply. `entity_registry_updated`
+        # doesn't cover this, because the entity is *already* in the
+        # registry (persistent); only its state machine entry is new.
+        self._unsub_new_entity = self._hass.bus.async_listen(
+            EVENT_STATE_CHANGED, self._on_state_changed_for_new_entity
+        )
         # First-time evaluation for everything already in the store.
         for target in self._active_targets():
             self._apply_target(target)
@@ -92,6 +104,9 @@ class IconInjector:
         if self._unsub_registry:
             self._unsub_registry()
             self._unsub_registry = None
+        if self._unsub_new_entity:
+            self._unsub_new_entity()
+            self._unsub_new_entity = None
         for target in list(self._injected_targets):
             self._release_target(target)
         self._tracked_sources.clear()
@@ -117,6 +132,38 @@ class IconInjector:
         the rules that have glob targets so newly-eligible entities get
         decorated. Cheap: only rules with globs are walked, and apply
         is a per-entity O(1) attribute write."""
+        self._reapply_glob_rules()
+
+    @callback
+    def _on_state_changed_for_new_entity(self, event: Event) -> None:
+        """Fast-path filter on every state_changed event: only act when
+        `old_state is None` (an entity just appeared in the state machine
+        that wasn't there a moment ago). Cheaply skips the ~all-changes
+        common case; the slow path runs at most once per entity lifetime.
+
+        Triggers a re-evaluation of every glob rule because the new
+        entity might match one of them. Also rebuilds the source-state
+        subscription so any rule that should now be watching this entity
+        going forward (per-target rules with globs) is correctly wired.
+        """
+        if event.data.get("old_state") is not None:
+            return
+        entity_id = event.data.get("entity_id")
+        if not isinstance(entity_id, str):
+            return
+        # If no glob rule could possibly match this entity, exit early
+        # before touching the rule store.
+        if not self._any_glob_matches(entity_id):
+            return
+        self._rebuild_subscription()
+        self._apply_target(entity_id)
+
+    @callback
+    def _reapply_glob_rules(self) -> None:
+        """Resolve every glob rule against current hass.states and apply
+        to each matched target. Refreshes the source-state subscription
+        in case the resolved set has changed."""
+        self._rebuild_subscription()
         for rule in self._store.all():
             if not rule.enabled:
                 continue
@@ -124,6 +171,18 @@ class IconInjector:
                 continue
             for target in self._resolve_targets(rule):
                 self._apply_target(target)
+
+    @callback
+    def _any_glob_matches(self, entity_id: str) -> bool:
+        """True iff any enabled rule has a glob target that matches the
+        given entity id. Cheap pre-check for the state-changed handler."""
+        for rule in self._store.all():
+            if not rule.enabled:
+                continue
+            for t in rule.targets:
+                if _is_glob(t) and fnmatch.fnmatchcase(entity_id, t):
+                    return True
+        return False
 
     @callback
     def _rebuild_subscription(self) -> None:

@@ -38,7 +38,7 @@ async function bootstrap(): Promise<void> {
 
   const rules = new RuleStore();
   const watcher = new StateWatcher(hass.connection);
-  const painter = new Painter();
+  const painter = new Painter(watcher);
 
   // Painter is state-driven: any source/target state change can affect
   // a painted host's smart_icons_color attribute, so re-evaluate on each.
