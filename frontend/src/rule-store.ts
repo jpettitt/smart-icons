@@ -73,9 +73,11 @@ export class RuleStore {
   }
 
   byTarget(entityId: string): Rule[] {
+    // Literal-match only; glob expansion would require live state and
+    // belongs in the painter / panel layer, not here.
     const out: Rule[] = [];
     for (const r of this.rules.values()) {
-      if (r.target === entityId) out.push(r);
+      if (r.targets.includes(entityId)) out.push(r);
     }
     return out;
   }

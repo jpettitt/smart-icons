@@ -28,10 +28,11 @@ Trade-offs accepted in v0.1:
 
 from __future__ import annotations
 
-import logging
+import fnmatch
 from collections.abc import Callable
 from typing import Any
 
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 
@@ -40,7 +41,11 @@ from .evaluator import evaluate_rule, pick_winner
 from .rule import Rule
 from .store import RuleStore
 
-_LOGGER = logging.getLogger(__name__)
+_GLOB_CHARS = ("*", "?", "[")
+
+
+def _is_glob(entry: str) -> bool:
+    return any(c in entry for c in _GLOB_CHARS)
 
 
 class IconInjector:
@@ -51,6 +56,7 @@ class IconInjector:
         self._store = store
         self._unsub_store: Callable[[], None] | None = None
         self._unsub_state: Callable[[], None] | None = None
+        self._unsub_registry: Callable[[], None] | None = None
         self._tracked_sources: set[str] = set()
         # Targets we've written into, so we can release color cleanly on
         # rule removal. Icon is left as-is per the trade-off above.
@@ -63,6 +69,13 @@ class IconInjector:
             return
         self._unsub_store = self._store.subscribe(self._on_store_event)
         self._rebuild_subscription()
+        # Watch the entity registry too so glob-targeted rules pick up
+        # newly-added entities. We listen for the broad
+        # `entity_registry_updated` event; the handler debounces by just
+        # re-applying all glob rules once on each event burst (cheap).
+        self._unsub_registry = self._hass.bus.async_listen(
+            "entity_registry_updated", self._on_entity_registry_event
+        )
         # First-time evaluation for everything already in the store.
         for target in self._active_targets():
             self._apply_target(target)
@@ -76,6 +89,9 @@ class IconInjector:
         if self._unsub_state:
             self._unsub_state()
             self._unsub_state = None
+        if self._unsub_registry:
+            self._unsub_registry()
+            self._unsub_registry = None
         for target in list(self._injected_targets):
             self._release_target(target)
         self._tracked_sources.clear()
@@ -88,15 +104,40 @@ class IconInjector:
         # widen or narrow; any previously-injected target that no longer
         # has a matching rule should be released.
         self._rebuild_subscription()
-        self._apply_target(rule.target)
+        for target in self._resolve_targets(rule):
+            self._apply_target(target)
         active = self._active_targets()
         for target in list(self._injected_targets):
             if target not in active:
                 self._release_target(target)
 
     @callback
+    def _on_entity_registry_event(self, _event: Event) -> None:
+        """A new entity may now match a glob in some rule — re-apply
+        the rules that have glob targets so newly-eligible entities get
+        decorated. Cheap: only rules with globs are walked, and apply
+        is a per-entity O(1) attribute write."""
+        for rule in self._store.all():
+            if not rule.enabled:
+                continue
+            if not any(_is_glob(t) for t in rule.targets):
+                continue
+            for target in self._resolve_targets(rule):
+                self._apply_target(target)
+
+    @callback
     def _rebuild_subscription(self) -> None:
-        sources = {r.source for r in self._store.all() if r.enabled}
+        sources: set[str] = set()
+        for r in self._store.all():
+            if not r.enabled:
+                continue
+            if r.source:
+                # Explicit source — subscribe to that one entity for this rule.
+                sources.add(r.source)
+            else:
+                # Per-target rule — subscribe to each resolved target so
+                # changes to its own state retrigger evaluation.
+                sources |= self._resolve_targets(r)
         if sources == self._tracked_sources:
             return
         if self._unsub_state is not None:
@@ -119,29 +160,73 @@ class IconInjector:
 
     # --- Pure helpers ------------------------------------------------------
 
+    def _resolve_targets(self, rule: Rule) -> set[str]:
+        """Expand a rule's `targets` list into the concrete set of entity
+        ids it currently applies to. Literals pass through; globs are
+        matched against current `hass.states` keys with fnmatch."""
+        out: set[str] = set()
+        all_ids: list[str] | None = None  # lazily fetched once per call
+        for entry in rule.targets:
+            if _is_glob(entry):
+                if all_ids is None:
+                    all_ids = list(self._hass.states.async_entity_ids())
+                out.update(fnmatch.filter(all_ids, entry))
+            else:
+                out.add(entry)
+        return out
+
     def _active_targets(self) -> set[str]:
-        return {r.target for r in self._store.all() if r.enabled}
+        active: set[str] = set()
+        for r in self._store.all():
+            if r.enabled:
+                active |= self._resolve_targets(r)
+        return active
 
     def _targets_for_source(self, source: str) -> set[str]:
-        return {
-            r.target
-            for r in self._store.all()
-            if r.enabled and r.source == source
-        }
+        """Which targets are affected when `source`'s state changes?
+
+        For explicit-source rules: all of the rule's targets (one source
+        drives them all). For per-target rules: only the single target
+        that *is* `source` — other targets aren't affected by another
+        target's state change.
+        """
+        out: set[str] = set()
+        for r in self._store.all():
+            if not r.enabled:
+                continue
+            resolved = self._resolve_targets(r)
+            if r.source:
+                if r.source == source:
+                    out |= resolved
+            else:
+                # Per-target: only the matching target itself.
+                if source in resolved:
+                    out.add(source)
+        return out
 
     # --- The actual write --------------------------------------------------
 
     @callback
     def _apply_target(self, target: str) -> None:
         """Evaluate rules for `target` and update its state attributes."""
-        rules = [r for r in self._store.all() if r.target == target and r.enabled]
+        # A rule applies to this target if any of its targets entries
+        # (literal or glob) resolves to this entity_id.
+        rules = [
+            r
+            for r in self._store.all()
+            if r.enabled and target in self._resolve_targets(r)
+        ]
         if not rules:
             self._release_target(target)
             return
 
         decisions: list[tuple[Rule, dict[str, str | None] | None]] = []
         for rule in rules:
-            source_state = self._hass.states.get(rule.source)
+            # Effective source: explicit if set, otherwise the target
+            # itself (per-target rules). source_attribute applies to
+            # whichever source we end up reading from.
+            effective_source = rule.source or target
+            source_state = self._hass.states.get(effective_source)
             source_value: str | None = None
             if source_state is not None:
                 if rule.source_attribute:

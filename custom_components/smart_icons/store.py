@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -43,13 +44,15 @@ class RuleStore:
         self._rules = {}
         for raw in rules:
             # Stored rules were validated on write, but re-validate on read
-            # so a corrupted .storage file fails loudly rather than silently
-            # serving bad data into the websocket layer.
+            # so a corrupted .storage file degrades to "drop the bad rule"
+            # rather than serving malformed data into the websocket layer.
+            # Catch only the two exceptions either side can throw —
+            # everything else is an actual bug we want to see in the log.
             try:
                 validated = validate_rule(raw)
-            except Exception:  # noqa: BLE001 — third-party validation may raise broadly
+                rule = Rule.from_dict(validated)
+            except (vol.Invalid, ValueError):
                 continue
-            rule = Rule.from_dict(validated)
             if not rule.id:
                 continue
             self._rules[rule.id] = rule
@@ -70,7 +73,10 @@ class RuleStore:
 
     @callback
     def by_target(self, entity_id: str) -> list[Rule]:
-        return [r for r in self._rules.values() if r.target == entity_id]
+        """Rules whose `targets` literally include this entity id.
+        Glob entries are not expanded here — glob resolution lives in
+        the injector where `hass.states` is available."""
+        return [r for r in self._rules.values() if entity_id in r.targets]
 
     async def async_upsert(self, rule_data: dict[str, Any]) -> Rule:
         """Validate, insert or update; returns the stored Rule."""

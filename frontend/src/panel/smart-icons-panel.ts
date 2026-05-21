@@ -29,6 +29,11 @@ export class SmartIconsPanel extends LitElement {
   @state() private editing: Rule | null = null;
   @state() private dialogOpen = false;
   @state() private editorError = '';
+  @state() private pendingDelete: Rule | null = null;
+  // Cleared on next successful action or when the user dismisses it.
+  // Used for failures from out-of-dialog actions (toggle, delete) where
+  // there's no inline error surface — the editor has its own errorMessage.
+  @state() private actionError = '';
 
   private store?: RuleStore;
   private unsubscribe?: () => void;
@@ -49,54 +54,122 @@ export class SmartIconsPanel extends LitElement {
       <ha-card>
         <header>
           <h1>Smart Icons</h1>
-          <mwc-button raised @click=${this.addRule}>+ Add rule</mwc-button>
+          <ha-button raised @click=${this.addRule}>+ Add rule</ha-button>
         </header>
+        ${this.actionError
+          ? html`
+              <div class="action-error" role="alert">
+                <span>${this.actionError}</span>
+                <button
+                  class="action-error-dismiss"
+                  @click=${this.clearActionError}
+                  aria-label="Dismiss"
+                >×</button>
+              </div>
+            `
+          : nothing}
         ${this.rules.length === 0 ? this.renderEmpty() : this.renderTable()}
       </ha-card>
       ${this.dialogOpen ? this.renderDialog() : nothing}
+      ${this.pendingDelete ? this.renderDeleteConfirm() : nothing}
+    `;
+  }
+
+  private clearActionError = (): void => {
+    this.actionError = '';
+  };
+
+  private renderDeleteConfirm() {
+    const rule = this.pendingDelete!;
+    const label =
+      rule.targets.length === 1
+        ? rule.targets[0]
+        : `${rule.targets.length} targets (${rule.targets[0]}…)`;
+    return html`
+      <ha-dialog
+        open
+        heading="Delete rule?"
+        @closed=${this.cancelDelete}
+      >
+        <p>
+          This permanently removes the rule for <code>${label}</code>.
+          The color override (and on the next state update, the icon
+          override) will be cleared.
+        </p>
+        <ha-button slot="secondaryAction" @click=${this.cancelDelete}
+          >Cancel</ha-button
+        >
+        <ha-button
+          slot="primaryAction"
+          variant="danger"
+          @click=${this.confirmDelete}
+          >Delete</ha-button
+        >
+      </ha-dialog>
     `;
   }
 
   private renderEmpty() {
     return html`
       <div class="empty">
-        <p>No rules yet.</p>
-        <p>
-          Click <strong>+ Add rule</strong> to drive any entity's icon color
-          or glyph from another entity's state.
+        <div class="empty-illustration">🎨</div>
+        <h2>No rules yet</h2>
+        <p class="empty-lead">
+          Smart Icons lets any entity's icon take its color or glyph
+          from another entity's state.
         </p>
+        <p>
+          A few examples to get started:
+        </p>
+        <ul class="empty-examples">
+          <li>Color your kitchen light's icon by the kitchen sensor's temperature.</li>
+          <li>Show a different glyph for <code>sun.sun</code> based on its azimuth.</li>
+          <li>Highlight every <code>light.kitchen_*</code> entity together with a glob target.</li>
+        </ul>
+        <ha-button raised @click=${this.addRule}>+ Create your first rule</ha-button>
       </div>
     `;
   }
 
   private renderTable() {
-    const sorted = [...this.rules].sort((a, b) =>
-      a.target === b.target
+    const sorted = [...this.rules].sort((a, b) => {
+      const aKey = a.targets[0] ?? '';
+      const bKey = b.targets[0] ?? '';
+      return aKey === bKey
         ? b.priority - a.priority
-        : a.target.localeCompare(b.target)
-    );
+        : aKey.localeCompare(bKey);
+    });
     return html`
-      <table>
-        <thead>
-          <tr>
-            <th>Target</th>
-            <th>Source</th>
-            <th>Mode</th>
-            <th>Enabled</th>
-            <th>Priority</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${sorted.map((r) => this.renderRow(r))}
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Targets</th>
+              <th>Source</th>
+              <th>Mode</th>
+              <th>Enabled</th>
+              <th>Priority</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sorted.map((r) => this.renderRow(r))}
+          </tbody>
+        </table>
+      </div>
     `;
   }
 
   private renderRow(rule: Rule) {
+    const firstTarget = rule.targets[0] ?? '';
+    const targetLabel =
+      rule.targets.length <= 1
+        ? firstTarget
+        : `${firstTarget} (+${rule.targets.length - 1} more)`;
+    const sourceIsTargetDefault =
+      rule.targets.length === 1 && rule.source === firstTarget;
     const sourceLabel = (() => {
-      const base = rule.source === rule.target ? '—' : rule.source;
+      const base = sourceIsTargetDefault ? '—' : rule.source;
       if (rule.source_attribute) {
         return base === '—'
           ? `(target).${rule.source_attribute}`
@@ -106,22 +179,24 @@ export class SmartIconsPanel extends LitElement {
     })();
     return html`
       <tr>
-        <td>${rule.target}</td>
-        <td>${sourceLabel}</td>
-        <td><span class="pill">${rule.mode}</span></td>
-        <td>
+        <td data-label="Targets" title=${rule.targets.join(', ')}>${targetLabel}</td>
+        <td data-label="Source">${sourceLabel}</td>
+        <td data-label="Mode"><span class="pill">${rule.mode}</span></td>
+        <td data-label="Enabled">
           <ha-switch
             .checked=${rule.enabled}
-            @change=${(e: Event) =>
-              this.toggleRule(rule, (e.target as HTMLInputElement).checked)}
+            @change=${(e: Event) => {
+              const target = e.target as HTMLInputElement;
+              void this.toggleRule(rule, target.checked, target);
+            }}
           ></ha-switch>
         </td>
-        <td>${rule.priority}</td>
+        <td data-label="Priority">${rule.priority}</td>
         <td class="actions">
           <div class="action-buttons">
-            <mwc-button @click=${() => this.editRule(rule)}>Edit</mwc-button>
-            <mwc-button @click=${() => this.duplicateRule(rule)}>Duplicate</mwc-button>
-            <mwc-button @click=${() => this.deleteRule(rule)}>Delete</mwc-button>
+            <ha-button @click=${() => this.editRule(rule)}>Edit</ha-button>
+            <ha-button @click=${() => this.duplicateRule(rule)}>Duplicate</ha-button>
+            <ha-button @click=${() => this.deleteRule(rule)}>Delete</ha-button>
           </div>
         </td>
       </tr>
@@ -133,6 +208,7 @@ export class SmartIconsPanel extends LitElement {
       <ha-dialog
         open
         heading=${this.dialogTitle}
+        style="--dialog-content-padding: 0"
         @closed=${this.cancelEdit}
       >
         <smart-icons-rule-editor
@@ -223,30 +299,50 @@ export class SmartIconsPanel extends LitElement {
     }
   };
 
-  private async toggleRule(rule: Rule, enabled: boolean): Promise<void> {
+  private async toggleRule(
+    rule: Rule,
+    enabled: boolean,
+    target: HTMLInputElement
+  ): Promise<void> {
     try {
       await this.hass.connection.sendMessagePromise({
         type: 'smart_icons/upsert',
         rule: { ...rule, enabled },
       });
+      this.actionError = '';
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[smart-icons-panel] toggle failed', err);
+      // Snap the switch back so the UI matches reality. The server-side
+      // upsert never landed, so we shouldn't show the new state.
+      target.checked = rule.enabled;
+      this.actionError = `Couldn't ${enabled ? 'enable' : 'disable'} rule: ${this.errorMessage(err)}`;
     }
   }
 
-  private async deleteRule(rule: Rule): Promise<void> {
-    if (!confirm(`Delete rule for ${rule.target}?`)) return;
+  private deleteRule(rule: Rule): void {
+    // Stage the rule for confirmation; the modal renders separately so
+    // the user gets HA-native styling instead of the browser's confirm().
+    this.pendingDelete = rule;
+  }
+
+  private cancelDelete = (): void => {
+    this.pendingDelete = null;
+  };
+
+  private confirmDelete = async (): Promise<void> => {
+    const rule = this.pendingDelete;
+    this.pendingDelete = null;
+    if (!rule) return;
     try {
       await this.hass.connection.sendMessagePromise({
         type: 'smart_icons/delete',
         rule_id: rule.id,
       });
+      this.actionError = '';
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[smart-icons-panel] delete failed', err);
+      const label = rule.targets[0] ?? rule.id;
+      this.actionError = `Couldn't delete rule for ${label}: ${this.errorMessage(err)}`;
     }
-  }
+  };
 
   private errorMessage(err: unknown): string {
     if (err && typeof err === 'object' && 'message' in err) {

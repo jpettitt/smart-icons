@@ -156,9 +156,98 @@ def test_rule_from_to_dict_round_trip():
     rule.updated = rule.created
     d = rule.to_dict()
     again = Rule.from_dict(validate_rule(d))
-    assert again.target == rule.target
+    assert again.targets == rule.targets
     assert again.mode == rule.mode
     assert again.thresholds == rule.thresholds
+
+
+def test_legacy_target_normalized_to_targets():
+    """Rules stored under v0.1.x with `target: str` migrate to `targets`."""
+    out = validate_rule(_mapping_rule())  # uses legacy `target` key
+    assert out["targets"] == ["media_player.tv"]
+    assert "target" not in out  # legacy alias dropped post-normalization
+
+
+def test_canonical_targets_list_accepted():
+    out = validate_rule(
+        {
+            "targets": ["light.a", "light.b"],
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"on": {"color": "#fff"}},
+        }
+    )
+    assert out["targets"] == ["light.a", "light.b"]
+
+
+def test_glob_target_accepted():
+    out = validate_rule(
+        {
+            "targets": ["light.kitchen_*", "sensor.*_temp"],
+            "source": "sensor.weather",
+            "mode": "mapping",
+            "mapping": {"hot": {"color": "#f00"}},
+        }
+    )
+    assert out["targets"] == ["light.kitchen_*", "sensor.*_temp"]
+
+
+def test_glob_only_targets_get_empty_source_for_per_target():
+    """A rule with only glob targets and no explicit source ends up with
+    source='', which the injector interprets as 'each matched target is
+    its own source' (per-target evaluation)."""
+    out = validate_rule(
+        {
+            "targets": ["light.*"],
+            "mode": "mapping",
+            "mapping": {"on": {"color": "#fff"}},
+        }
+    )
+    assert out["source"] == ""
+
+
+def test_multi_literal_targets_get_empty_source_for_per_target():
+    out = validate_rule(
+        {
+            "targets": ["light.a", "light.b"],
+            "mode": "mapping",
+            "mapping": {"on": {"color": "#fff"}},
+        }
+    )
+    assert out["source"] == ""
+
+
+def test_single_literal_target_still_defaults_source():
+    out = validate_rule(
+        {
+            "targets": ["light.kitchen"],
+            "mode": "mapping",
+            "mapping": {"on": {"color": "#fff"}},
+        }
+    )
+    assert out["source"] == "light.kitchen"
+
+
+def test_explicit_source_overrides_per_target_default():
+    out = validate_rule(
+        {
+            "targets": ["light.a", "light.b"],
+            "source": "sensor.driver",
+            "mode": "mapping",
+            "mapping": {"on": {"color": "#fff"}},
+        }
+    )
+    assert out["source"] == "sensor.driver"
+
+
+def test_missing_targets_and_target_rejected():
+    with pytest.raises(vol.Invalid):
+        validate_rule(
+            {
+                "mode": "mapping",
+                "mapping": {"on": {"color": "#fff"}},
+            }
+        )
 
 
 def test_source_attribute_accepted():

@@ -20,7 +20,7 @@ from custom_components.smart_icons.rule import Rule
 def _rule(**overrides) -> Rule:
     defaults = {
         "id": "01",
-        "target": "light.kitchen",
+        "targets": ["light.kitchen"],
         "source": "sensor.temp",
         "mode": "mapping",
         "mapping": {"on": {"color": "#fff"}},

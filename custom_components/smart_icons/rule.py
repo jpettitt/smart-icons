@@ -9,7 +9,7 @@ runtime evaluation is deferred to v0.2.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import voluptuous as vol
@@ -77,10 +77,30 @@ def _mapping_dict(mapping: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(k): DECORATION_SCHEMA(v) for k, v in mapping.items()}
 
 
+def _target_string(v: Any) -> str:
+    """Validate one target entry — either a literal `domain.object_id`
+    entity id, or a glob pattern containing `*` / `?` / `[...]` that the
+    injector resolves against `hass.states` at apply time."""
+    if not isinstance(v, str) or not v:
+        raise vol.Invalid("target must be a non-empty string")
+    # Globs are allowed anywhere; literals must pass cv.entity_id.
+    if any(c in v for c in "*?["):
+        return v
+    return cv.entity_id(v)
+
+
 _RULE_BASE_SCHEMA = vol.Schema(
     {
-        vol.Required("target"): cv.entity_id,
-        vol.Optional("source"): cv.entity_id,
+        # Legacy single-target alias — accepted for back-compat with rules
+        # stored under v0.1.x. Normalized into `targets` during validation
+        # (see validate_rule below).
+        vol.Optional("target"): _target_string,
+        # Canonical list. Each entry is either an entity_id or a glob.
+        vol.Optional("targets"): [_target_string],
+        # Empty / missing source has special meaning for multi-target
+        # rules: each resolved target acts as its own source ("per-target"
+        # evaluation). For single-target rules it defaults to the target.
+        vol.Optional("source"): vol.Any(cv.entity_id, ""),
         # When set, the injector reads `state.attributes[source_attribute]`
         # instead of `state.state` as the value fed to the evaluator. Lets
         # rules drive off numeric attributes like `sun.sun.azimuth` or
@@ -104,6 +124,19 @@ def validate_rule(data: dict[str, Any]) -> dict[str, Any]:
     """Validate a rule dict; return the normalized form. Raises vol.Invalid."""
     validated = _RULE_BASE_SCHEMA(dict(data))
 
+    # Normalize legacy `target` into the canonical `targets` list. After
+    # this point, downstream code only deals with `targets`.
+    targets = validated.get("targets")
+    target_legacy = validated.get("target")
+    if not targets and target_legacy:
+        targets = [target_legacy]
+    if not targets:
+        raise vol.Invalid("rule must specify 'targets' (or legacy 'target')")
+    # Drop the legacy alias so to_dict doesn't carry it around. Store the
+    # normalized list back into the validated dict.
+    validated.pop("target", None)
+    validated["targets"] = targets
+
     mode = validated["mode"]
     if mode == MODE_THRESHOLDS:
         if not validated.get("thresholds"):
@@ -111,17 +144,30 @@ def validate_rule(data: dict[str, Any]) -> dict[str, Any]:
     elif mode == MODE_MAPPING:
         if not validated.get("mapping"):
             raise vol.Invalid("mode=mapping requires non-empty 'mapping'")
-        # _else is a reserved key but optional; ensure no double-underscore weirdness.
-        # Empty mappings (after dropping _else) are still valid — just means "release
-        # for any non-else value", which is consistent with the release semantics.
     elif mode == MODE_TEMPLATE:
         tpl = validated.get("template")
         if not tpl or not tpl.strip():
             raise vol.Invalid("mode=template requires non-empty 'template'")
 
-    # source defaults to target — done here so the dataclass and downstream
-    # consumers see the resolved value without re-deriving each time.
-    validated.setdefault("source", validated["target"])
+    # Source handling depends on the target shape:
+    # - Single literal target with no source given: default to the target
+    #   so the "decorate this entity based on its own state" common case
+    #   keeps working without extra config.
+    # - Multi-target (list or glob) with no source: leave source empty,
+    #   which the injector interprets as "each target is its own source".
+    #   This is the natural mental model for glob rules — each matched
+    #   entity reacts to its own state (and source_attribute).
+    # - Source explicitly set: respected as-is, applied uniformly to
+    #   every resolved target.
+    source = validated.get("source")
+    if not source:
+        if (
+            len(targets) == 1
+            and not any(c in targets[0] for c in "*?[")
+        ):
+            validated["source"] = targets[0]
+        else:
+            validated["source"] = ""
 
     # Normalize empty source_attribute to None so the injector's
     # "is attribute set?" check is a clean `if rule.source_attribute:`.
@@ -134,9 +180,13 @@ def validate_rule(data: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(slots=True)
 class Rule:
-    """In-memory representation of a stored rule."""
+    """In-memory representation of a stored rule.
 
-    target: str
+    `targets` is the canonical list — each entry is either an
+    entity_id or a glob the injector resolves at apply time.
+    """
+
+    targets: list[str]
     source: str
     mode: str
     id: str = ""
@@ -153,10 +203,21 @@ class Rule:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Rule":
         """Build a Rule from an already-validated dict."""
+        # validate_rule normalizes target → [target] into `targets`, but
+        # tolerate either input here as a defense for direct callers.
+        targets = data.get("targets")
+        if not targets and "target" in data:
+            targets = [data["target"]]
+        if not targets:
+            raise ValueError("Rule.from_dict requires 'targets' (or legacy 'target')")
+        # Source may be empty (per-target evaluation) or a concrete entity
+        # id. Don't substitute the first target here — validate_rule has
+        # already done the "default for single-target literal" logic, so
+        # whatever ends up in `data["source"]` is authoritative.
         return cls(
             id=data.get("id") or "",
-            target=data["target"],
-            source=data.get("source") or data["target"],
+            targets=list(targets),
+            source=data.get("source", ""),
             source_attribute=data.get("source_attribute") or None,
             mode=data["mode"],
             enabled=data.get("enabled", True),
@@ -173,7 +234,7 @@ class Rule:
         """Serialize to a JSON-compatible dict; omits unset mode payloads."""
         out: dict[str, Any] = {
             "id": self.id,
-            "target": self.target,
+            "targets": list(self.targets),
             "source": self.source,
             "mode": self.mode,
             "enabled": self.enabled,

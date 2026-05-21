@@ -21,7 +21,12 @@ import { editorStyles } from './styles.js';
 
 interface WorkingState {
   id?: string;
-  target: string;
+  /** Literal entity ids — driven by ha-selector with `multiple: true`. */
+  targetEntities: string[];
+  /** Glob patterns — driven by a separate text-input list. Each entry
+   *  is a pattern like `light.kitchen_*` that the backend resolves at
+   *  apply time. */
+  targetGlobs: Array<{ value: string; _key: number }>;
   source: string;
   source_attribute: string;
   mode: RuleMode;
@@ -191,20 +196,20 @@ export class SmartIconsRuleEditor extends LitElement {
 
       <section class="group">
         <h3 class="group-title">Apply to</h3>
-        ${this.renderEntityField(
-          'Target entity',
-          'e.g. light.kitchen',
-          this.working.target,
-          (v) => this.patch({ target: v }),
-          true
-        )}
+        ${this.renderTargetEntitiesField()}
+        ${this.renderTargetGlobsField()}
+        ${this.targetsError
+          ? html`<div class="inline-error">${this.targetsError}</div>`
+          : null}
       </section>
 
       <section class="group">
         <h3 class="group-title">React to</h3>
         ${this.renderEntityField(
           'Source entity',
-          'defaults to target',
+          this.isPerTarget
+            ? 'leave blank — per-target source'
+            : 'defaults to target',
           this.working.source,
           (v) => this.patch({ source: v })
         )}
@@ -221,12 +226,7 @@ export class SmartIconsRuleEditor extends LitElement {
               })}
           />
           <span class="hint">
-            ${this.working.source_attribute
-              ? html`Watching <code>${this.sourceEntityForDisplay}.${this
-                  .working.source_attribute}</code>`
-              : html`Watching the state of <code>${this
-                  .sourceEntityForDisplay}</code>. Pick a state attribute
-                (e.g. <code>azimuth</code>) for numeric-attribute rules.`}
+            ${this.renderWatchingHint()}
           </span>
         </label>
       </section>
@@ -267,6 +267,9 @@ export class SmartIconsRuleEditor extends LitElement {
           : this.working.mode === 'mapping'
             ? this.renderMapping()
             : this.renderTemplate()}
+        ${this.modeError
+          ? html`<div class="inline-error">${this.modeError}</div>`
+          : null}
       </section>
 
       <section class="group">
@@ -293,27 +296,116 @@ export class SmartIconsRuleEditor extends LitElement {
         : null}
 
       <div class="actions">
-        <button
-          class="btn-text"
-          @click=${() =>
-            this.dispatchEvent(
-              new CustomEvent('cancel', { bubbles: true, composed: true })
-            )}
-        >
-          Cancel
-        </button>
-        <button class="btn-primary" @click=${this.save}>Save</button>
+        <ha-button @click=${this.cancelClicked}>Cancel</ha-button>
+        <ha-button
+          variant="brand"
+          ?disabled=${this.validationErrors.length > 0}
+          @click=${this.save}
+        >Save</ha-button>
       </div>
     `;
   }
 
-  /** Entity id used in the "Watching …" hint — falls back to target. */
-  private get sourceEntityForDisplay(): string {
-    return (
-      this.working.source.trim() ||
-      this.working.target.trim() ||
-      '(entity)'
+  private cancelClicked = (): void => {
+    this.dispatchEvent(
+      new CustomEvent('cancel', { bubbles: true, composed: true })
     );
+  };
+
+  /** Called by the host panel from the dialog's action-slot Save
+   *  button. Fires the `save` event with the serialized payload only
+   *  if validation passes. */
+  public submit(): boolean {
+    if (this.validationErrors.length > 0) return false;
+    this.save();
+    return true;
+  }
+
+  /** Aggregated list of validation errors. Drives the Save button's
+   *  disabled state in the host panel. Per-section render code reads
+   *  the individual getters below to place each error inline near its
+   *  source field. */
+  public get validationErrors(): readonly string[] {
+    return [
+      this.targetsError,
+      this.sourceError,
+      this.modeError,
+    ].filter((e): e is string => e !== null);
+  }
+
+  private get targetsError(): string | null {
+    const entities = this.working.targetEntities;
+    const globs = this.working.targetGlobs
+      .map((g) => g.value.trim())
+      .filter((v) => v.length > 0);
+    if (entities.length === 0 && globs.length === 0) {
+      return 'Pick at least one target entity or add a glob pattern.';
+    }
+    return null;
+  }
+
+  private get sourceError(): string | null {
+    // No required-source rule any more: empty source means "per-target"
+    // (each matched target reacts to its own state).
+    return null;
+  }
+
+  private get modeError(): string | null {
+    if (this.working.mode === 'thresholds') {
+      const hasEntries = this.working.thresholds.some(
+        (t) =>
+          this.thresholdComparator(t) !== null || t.color || t.icon
+      );
+      if (!hasEntries) return 'Thresholds mode needs at least one entry.';
+    } else if (this.working.mode === 'mapping') {
+      const hasKey = this.working.mapping.some(
+        (m) => m.key.trim().length > 0
+      );
+      if (!hasKey) return 'Mapping mode needs at least one state → decoration entry.';
+    } else if (this.working.mode === 'template') {
+      if (!this.working.template.trim()) {
+        return 'Template mode requires a non-empty Jinja template.';
+      }
+    }
+    return null;
+  }
+
+  /** Entity id used in the "Watching …" hint — defaults to the first
+   *  literal target if `source` is unset (matches backend default). */
+  private get sourceEntityForDisplay(): string {
+    const sourceTrimmed = this.working.source.trim();
+    if (sourceTrimmed) return sourceTrimmed;
+    return this.working.targetEntities[0] || '(entity)';
+  }
+
+  /** Whether this rule is currently in "per-target" mode (no explicit
+   *  source, and either multiple targets or any glob present). The
+   *  injector evaluates each matched target against its own state. */
+  private get isPerTarget(): boolean {
+    if (this.working.source.trim()) return false;
+    const entities = this.working.targetEntities;
+    const globs = this.working.targetGlobs.filter((g) => g.value.trim());
+    return entities.length > 1 || globs.length > 0;
+  }
+
+  /** Contextual "Watching …" hint that explains what the source side of
+   *  the rule will read at evaluation time. Differs for single-source
+   *  vs per-target modes. */
+  private renderWatchingHint(): TemplateResult {
+    const attr = this.working.source_attribute.trim();
+    if (this.isPerTarget) {
+      return attr
+        ? html`Per-target: each matched entity's
+            <code>.${attr}</code> attribute drives its own decoration.`
+        : html`Per-target: each matched entity reacts to its own state.
+            Set a state attribute (e.g. <code>brightness</code>) to use
+            an attribute instead.`;
+    }
+    const ent = this.sourceEntityForDisplay;
+    return attr
+      ? html`Watching <code>${ent}.${attr}</code>`
+      : html`Watching the state of <code>${ent}</code>. Pick a state
+          attribute (e.g. <code>azimuth</code>) for numeric-attribute rules.`;
   }
 
   /** Attribute keys of the currently-selected source entity, for the
@@ -327,15 +419,37 @@ export class SmartIconsRuleEditor extends LitElement {
   }
 
   private renderThresholds() {
+    const entries = this.working.thresholds;
     return html`
       <fieldset>
         <legend>
           Threshold entries — first matching wins; the entry with no
-          comparator is the "else" branch.
+          comparator is the "else" branch. Use ↑ ↓ to reorder.
         </legend>
-        ${this.working.thresholds.map(
+        ${entries.length === 0
+          ? html`<p class="fieldset-hint">
+              No threshold entries yet. Each entry has a comparator
+              (e.g. <code>&lt; 18</code>) plus a color or icon to apply.
+              The first matching entry wins.
+            </p>`
+          : null}
+        ${entries.map(
           (t, idx) => html`
-            <div class="row">
+            <div class="row threshold-row">
+              <div class="reorder-buttons">
+                <button
+                  class="btn-icon"
+                  ?disabled=${idx === 0}
+                  @click=${() => this.moveThreshold(idx, -1)}
+                  title="Move up"
+                >↑</button>
+                <button
+                  class="btn-icon"
+                  ?disabled=${idx === entries.length - 1}
+                  @click=${() => this.moveThreshold(idx, 1)}
+                  title="Move down"
+                >↓</button>
+              </div>
               <select
                 .value=${this.thresholdComparator(t)}
                 @change=${(e: Event) =>
@@ -384,13 +498,30 @@ export class SmartIconsRuleEditor extends LitElement {
     `;
   }
 
+  private moveThreshold(idx: number, delta: -1 | 1): void {
+    const target = idx + delta;
+    if (target < 0 || target >= this.working.thresholds.length) return;
+    const next = [...this.working.thresholds];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    this.working = { ...this.working, thresholds: next };
+  }
+
   private renderMapping() {
+    const entries = this.working.mapping;
+    const noKeys = entries.every((m) => !m.key.trim());
     return html`
       <fieldset>
         <legend>
           State → decoration. <code>_else</code> is the fallback bucket.
         </legend>
-        ${this.working.mapping.map(
+        ${noKeys
+          ? html`<p class="fieldset-hint">
+              Add one entry per state value (e.g. <code>on</code>,
+              <code>off</code>) — or use <code>_else</code> as a catch-all
+              fallback. Each entry can set a color, an icon, or both.
+            </p>`
+          : null}
+        ${entries.map(
           (m, idx) => html`
             <div class="row">
               <input
@@ -496,10 +627,24 @@ export class SmartIconsRuleEditor extends LitElement {
   }
 
   private hydrate(rule: Rule): WorkingState {
+    const entities: string[] = [];
+    const globs: WorkingState['targetGlobs'] = [];
+    for (const t of rule.targets) {
+      if (/[*?[]/.test(t)) {
+        globs.push({ value: t, _key: nextKey() });
+      } else {
+        entities.push(t);
+      }
+    }
+    const firstLiteral = entities[0];
     return {
       id: rule.id,
-      target: rule.target,
-      source: rule.source === rule.target ? '' : rule.source,
+      targetEntities: entities,
+      targetGlobs: globs,
+      // Source defaults to the first literal target; show blank when
+      // that's the case so the "defaults to first target" semantics
+      // are visible. Show explicit value when source differs.
+      source: rule.source === firstLiteral ? '' : rule.source,
       source_attribute: rule.source_attribute ?? '',
       mode: rule.mode,
       thresholds: (rule.thresholds ?? []).map((t) => ({
@@ -522,7 +667,8 @@ export class SmartIconsRuleEditor extends LitElement {
 
   private blankState(): WorkingState {
     return {
-      target: '',
+      targetEntities: [],
+      targetGlobs: [],
       source: '',
       source_attribute: '',
       mode: 'mapping',
@@ -531,6 +677,151 @@ export class SmartIconsRuleEditor extends LitElement {
       template: '',
       enabled: true,
       priority: 10,
+    };
+  }
+
+  /** Literal entity targets via ha-selector with `multiple: true`. Same
+   *  picker UX HA's options flows use. Falls back to a plain text input
+   *  with datalist autocomplete if the selector chunk isn't loaded. */
+  private renderTargetEntitiesField(): TemplateResult {
+    if (customElements.get('ha-selector') && this.hass) {
+      return html`
+        <div class="field">
+          <ha-selector
+            .hass=${this.hass}
+            .selector=${{ entity: { multiple: true } }}
+            .value=${this.working.targetEntities}
+            .label=${'Target entities'}
+            @value-changed=${(e: CustomEvent<{ value: string[] }>) =>
+              this.patch({ targetEntities: e.detail?.value ?? [] })}
+          ></ha-selector>
+        </div>
+      `;
+    }
+    // Selector not available — fall back to a plain comma-separated input.
+    return html`
+      <label class="field">
+        <span class="label">Target entities (comma-separated)</span>
+        <input
+          type="text"
+          list="smart-icons-entities"
+          placeholder="light.kitchen, light.living_room"
+          .value=${this.working.targetEntities.join(', ')}
+          @input=${(e: Event) =>
+            this.patch({
+              targetEntities: (e.target as HTMLInputElement).value
+                .split(',')
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0),
+            })}
+        />
+      </label>
+    `;
+  }
+
+  /** Optional list of glob patterns. Each row is a plain text input
+   *  with a live "Matches N entities" preview underneath. */
+  private renderTargetGlobsField(): TemplateResult {
+    return html`
+      <fieldset>
+        <legend>
+          Glob patterns (optional) — match many entities at once.
+          E.g. <code>light.kitchen_*</code> or <code>sensor.temp_?</code>.
+        </legend>
+        ${this.working.targetGlobs.length === 0
+          ? html`<p class="fieldset-hint">
+              No patterns. Use the picker above for individual entities,
+              or click <strong>+ Add pattern</strong> to target a group.
+            </p>`
+          : null}
+        ${this.working.targetGlobs.map(
+          (g, idx) => html`
+            <div class="target-row">
+              <input
+                type="text"
+                placeholder="e.g. light.kitchen_*"
+                .value=${g.value}
+                @input=${(e: Event) =>
+                  this.updateGlob(idx, (e.target as HTMLInputElement).value)}
+              />
+              <button
+                class="btn-icon"
+                @click=${() => this.removeGlob(idx)}
+                title="Remove pattern"
+              >×</button>
+            </div>
+            ${this.renderGlobPreview(g.value)}
+          `
+        )}
+        <button class="btn-text add-button" @click=${this.addGlob}>
+          + Add pattern
+        </button>
+      </fieldset>
+    `;
+  }
+
+  /** Render a "Matches N entities: ..." hint under a glob target row.
+   *  Returns nothing for empty input. Computes against the current
+   *  hass.states snapshot so the user sees what their pattern matches. */
+  private renderGlobPreview(value: string): TemplateResult | null {
+    const trimmed = value.trim();
+    if (!trimmed || !/[*?[]/.test(trimmed)) return null;
+    if (!this.hass) return null;
+    const matches = this.matchGlob(trimmed);
+    if (matches.length === 0) {
+      return html`<div class="target-hint target-hint--empty">
+        No entities match this pattern yet.
+      </div>`;
+    }
+    const preview = matches.slice(0, 3).join(', ');
+    const more = matches.length > 3 ? ` (+${matches.length - 3} more)` : '';
+    return html`<div class="target-hint">
+      Matches ${matches.length}
+      ${matches.length === 1 ? 'entity' : 'entities'}:
+      <code>${preview}</code>${more}
+    </div>`;
+  }
+
+  /** Tiny glob matcher matching Python's fnmatch: `*` (any), `?` (one),
+   *  `[set]` (one of). Mirrors the backend's `_resolve_targets` so the
+   *  preview matches what the injector actually applies. */
+  private matchGlob(pattern: string): string[] {
+    const re = new RegExp(
+      '^' +
+        pattern
+          .replace(/[.+^$()|\\]/g, '\\$&')
+          .replace(/\*/g, '.*')
+          .replace(/\?/g, '.') +
+        '$'
+    );
+    return Object.keys(this.hass?.states ?? {})
+      .filter((id) => re.test(id))
+      .sort();
+  }
+
+  private updateGlob(idx: number, value: string): void {
+    this.working = {
+      ...this.working,
+      targetGlobs: this.working.targetGlobs.map((g, i) =>
+        i === idx ? { ...g, value } : g
+      ),
+    };
+  }
+
+  private addGlob = (): void => {
+    this.working = {
+      ...this.working,
+      targetGlobs: [
+        ...this.working.targetGlobs,
+        { value: '', _key: nextKey() },
+      ],
+    };
+  };
+
+  private removeGlob(idx: number): void {
+    this.working = {
+      ...this.working,
+      targetGlobs: this.working.targetGlobs.filter((_, i) => i !== idx),
     };
   }
 
@@ -658,11 +949,16 @@ export class SmartIconsRuleEditor extends LitElement {
   };
 
   private serialize(): Partial<Rule> {
-    const target = this.working.target.trim();
-    const source = this.working.source.trim() || target;
+    const entities = this.working.targetEntities;
+    const globs = this.working.targetGlobs
+      .map((g) => g.value.trim())
+      .filter((v) => v.length > 0);
+    const targets = [...entities, ...globs];
+    const sourceTrimmed = this.working.source.trim();
+    const source = sourceTrimmed || entities[0] || '';
     const sourceAttribute = this.working.source_attribute.trim();
     const base: Partial<Rule> = {
-      target,
+      targets,
       source,
       mode: this.working.mode,
       enabled: this.working.enabled,

@@ -99,7 +99,7 @@ async def test_subscribe_streams_events(
     msgs = [await ws.receive_json(), await ws.receive_json()]
     event = next(m for m in msgs if m.get("type") == "event")
     assert event["event"]["type"] == "added"
-    assert event["event"]["rule"]["target"] == "light.kitchen"
+    assert event["event"]["rule"]["targets"] == ["light.kitchen"]
 
 
 async def test_version(hass, hass_ws_client, config_entry):  # noqa: ARG001

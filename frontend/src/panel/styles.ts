@@ -21,6 +21,55 @@ export const panelStyles = css`
   }
   ha-card {
     padding: 16px;
+    /* container-type: inline-size lets us write @container queries
+       below that respond to the card's own width, not the viewport.
+       Viewport-based media queries miss the sidebar-open case (the
+       panel iframe is narrower but the viewport isn't). */
+    container-type: inline-size;
+    container-name: panel;
+  }
+  /* min-width: 0 chain so the table can shrink with its container
+     instead of being pushed wider by long target names or the
+     non-wrapping actions column. Without this, flex/grid ancestors
+     hand the table their content-width rather than their box-width. */
+  .table-wrap {
+    min-width: 0;
+    overflow-x: auto;
+  }
+  /* Banner for failures from out-of-dialog actions (toggle, delete).
+     Sits above the table so it can't be missed; dismissible via the × button. */
+  .action-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    color: var(--error-color, #db4437);
+    background-color: color-mix(
+      in srgb,
+      var(--error-color, #db4437) 10%,
+      transparent
+    );
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  .action-error-dismiss {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 1.4em;
+    line-height: 1;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .action-error-dismiss:hover {
+    background: color-mix(
+      in srgb,
+      var(--error-color, #db4437) 15%,
+      transparent
+    );
   }
   header {
     display: flex;
@@ -49,7 +98,6 @@ export const panelStyles = css`
   }
   td.actions {
     text-align: right;
-    white-space: nowrap;
   }
   .action-buttons {
     display: inline-flex;
@@ -58,8 +106,39 @@ export const panelStyles = css`
   }
   .empty {
     text-align: center;
-    padding: 32px 16px;
+    padding: 40px 24px;
     color: var(--secondary-text-color, #727272);
+    max-width: 540px;
+    margin: 0 auto;
+  }
+  .empty-illustration {
+    font-size: 3em;
+    margin-bottom: 8px;
+  }
+  .empty h2 {
+    margin: 0 0 12px;
+    color: var(--primary-text-color, #212121);
+  }
+  .empty-lead {
+    font-size: 1.05em;
+    margin: 0 0 16px;
+  }
+  .empty-examples {
+    text-align: left;
+    display: inline-block;
+    margin: 8px 0 20px;
+    padding-left: 20px;
+  }
+  .empty-examples li {
+    margin-bottom: 6px;
+  }
+  .empty-examples code {
+    background: var(--secondary-background-color, #f5f5f5);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: var(--code-font-family, monospace);
+    font-size: 0.9em;
+    color: var(--primary-text-color, #212121);
   }
   .pill {
     display: inline-block;
@@ -94,13 +173,145 @@ export const panelStyles = css`
     background: var(--primary-color, #03a9f4);
     filter: brightness(1.1);
   }
+  button.btn-primary:disabled,
+  button.btn-text:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  button.btn-primary:disabled:hover {
+    filter: none;
+  }
+
+  /* Narrow-container layout: the table reformats as a vertical stack
+     of cards (one card per rule). Each cell becomes a labeled row
+     using the data-label attribute we set in renderRow(). Avoids
+     horizontal overflow and preserves all the info.
+
+     Uses a container query against ha-card (declared as a
+     container above) so the trigger is the card's own width — this
+     correctly fires when the HA sidebar opens and squeezes the
+     panel, where a viewport-based @media query would miss it.
+
+     Threshold ~860px: the actions column carries three ha-buttons
+     (~270px) on top of five other columns, so anything narrower
+     than ~900px clips. Card-stack reads better than a horizontally-
+     scrolling table below that. */
+  @container panel (max-width: 860px) {
+    :host {
+      padding: 12px 8px;
+    }
+    ha-card {
+      padding: 12px;
+    }
+    header {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+    table,
+    thead,
+    tbody,
+    tr,
+    th,
+    td {
+      display: block;
+    }
+    thead {
+      display: none;
+    }
+    tbody tr {
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    tbody td {
+      border-bottom: none;
+      padding: 4px 0;
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+    tbody td::before {
+      content: attr(data-label);
+      font-size: 0.85em;
+      font-weight: 500;
+      color: var(--secondary-text-color, #727272);
+    }
+    tbody td.actions {
+      display: block;
+      padding-top: 10px;
+      margin-top: 8px;
+      border-top: 1px solid var(--divider-color, #e0e0e0);
+      text-align: left;
+    }
+    tbody td.actions::before {
+      content: none;
+    }
+    .action-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+  }
 `;
 
 export const editorStyles = css`
   :host {
+    /* We zero out --dialog-content-padding on the host ha-dialog so
+       our sticky save bar can sit flush against the dialog's edge.
+       That means the editor itself has to provide its own content
+       padding around everything *except* the sticky actions row
+       (which has its own padding via .actions). */
     display: block;
-    min-width: 520px;
+    width: 100%;
+    padding: 16px 16px 0;
     color: var(--primary-text-color, #212121);
+    box-sizing: border-box;
+  }
+  .actions {
+    /* Pull the bar out to the editor's edge so its border-top spans
+       the full dialog width, not the inset content area. */
+    margin-left: -16px;
+    margin-right: -16px;
+  }
+  /* Mobile: tighter padding and the sticky bar drops back to static
+     flow. Sticky-bottom positioning interacts unpredictably with how
+     ha-dialog wraps its content area on small viewports (the dialog
+     can grow taller than the viewport, the scroll container can shift,
+     and the bar visually ends up floating over the wrong content).
+     Static actions sit at the natural end of the form — user scrolls
+     to bottom to save, which is the normal mobile pattern. */
+  @media (max-width: 600px) {
+    :host {
+      padding: 8px 8px 0;
+    }
+    .actions {
+      position: static;
+      margin-left: -8px;
+      margin-right: -8px;
+      padding: 10px 12px;
+    }
+    .group {
+      margin-bottom: 12px;
+    }
+    fieldset {
+      padding: 8px;
+    }
+    .row {
+      gap: 6px;
+      padding: 8px 0;
+    }
+    .row > select {
+      flex-basis: 64px;
+    }
+    .row > input[type='text'],
+    .row .swatch-input,
+    .row .icon-input,
+    .row ha-icon-picker {
+      flex-basis: 100%;
+    }
   }
   .dialog-header {
     display: flex;
@@ -205,12 +416,62 @@ export const editorStyles = css`
     opacity: 0.5;
     cursor: not-allowed;
   }
+  /* Mapping and threshold rows use flex-wrap so controls flow naturally
+     onto a second line when the dialog gets narrow. Each input has a
+     flex-basis that yields its preferred size while still shrinking. */
   .row {
-    display: grid;
-    grid-template-columns: minmax(80px, 1fr) minmax(160px, 2fr) minmax(140px, 2fr) auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
+  }
+  .row:last-of-type {
+    border-bottom: none;
+  }
+  .row > * {
+    min-width: 0;
+  }
+  .row > select {
+    flex: 0 0 80px;
+  }
+  .row > input[type='text'] {
+    flex: 1 1 140px;
+  }
+  .row .swatch-input,
+  .row .icon-input,
+  .row ha-icon-picker {
+    flex: 1 1 200px;
+  }
+  .row > .btn-icon {
+    flex: 0 0 auto;
+  }
+  .reorder-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    flex: 0 0 auto;
+  }
+  .reorder-buttons .btn-icon {
+    padding: 0 6px;
+    font-size: 1em;
+    line-height: 1.2;
+  }
+  /* Targets list: each row is a single text input plus a remove button. */
+  .target-row {
+    display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
+  }
+  .target-row input {
+    flex: 1;
+    min-width: 0;
+  }
+  .target-row .btn-icon:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
   /* For thresholds rows: comparator + value + color + icon + remove = 5 cols */
   .row:has(select:not(.legacy)) {
@@ -256,6 +517,34 @@ export const editorStyles = css`
     padding: 1px 4px;
     border-radius: 3px;
   }
+  .fieldset-hint {
+    font-size: 0.9em;
+    color: var(--secondary-text-color, #727272);
+    margin: 4px 0 12px;
+  }
+  .fieldset-hint code {
+    background: var(--secondary-background-color, #f5f5f5);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: var(--code-font-family, monospace);
+  }
+  /* Glob preview hint under each target row. */
+  .target-hint {
+    font-size: 0.8em;
+    color: var(--secondary-text-color, #727272);
+    padding: 0 4px 6px;
+    margin-top: -4px;
+  }
+  .target-hint code {
+    background: var(--secondary-background-color, #f5f5f5);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: var(--code-font-family, monospace);
+    font-size: 0.95em;
+  }
+  .target-hint--empty {
+    color: var(--warning-color, #ff9800);
+  }
   .add-button {
     margin-top: 8px;
   }
@@ -296,11 +585,22 @@ export const editorStyles = css`
     color: var(--error-color, #db4437);
     background: var(--secondary-background-color, #f5f5f5);
   }
+  /* Sticky actions row pinned to the bottom of the editor. The host
+     panel sets the dialog content padding to 0 on the ha-dialog so
+     this bar can sit flush against the dialog edge with no gap. The
+     actions have their own internal padding so they stay visually
+     separated from the content. */
   .actions {
+    position: sticky;
+    bottom: 0;
     display: flex;
     justify-content: flex-end;
     gap: 8px;
     margin-top: 16px;
+    padding: 12px 16px;
+    background: var(--card-background-color, #fff);
+    border-top: 1px solid var(--divider-color, #e0e0e0);
+    z-index: 1;
   }
   .error {
     color: var(--error-color, #db4437);
@@ -309,5 +609,18 @@ export const editorStyles = css`
     background: var(--error-color, #db4437);
     background-color: color-mix(in srgb, var(--error-color, #db4437) 10%, transparent);
     border-radius: 4px;
+  }
+  /* Inline validation error placed near the field(s) it refers to. */
+  .inline-error {
+    margin: 6px 0 0;
+    padding: 6px 10px;
+    color: var(--warning-color, #ff9800);
+    background-color: color-mix(
+      in srgb,
+      var(--warning-color, #ff9800) 8%,
+      transparent
+    );
+    border-radius: 4px;
+    font-size: 0.85em;
   }
 `;

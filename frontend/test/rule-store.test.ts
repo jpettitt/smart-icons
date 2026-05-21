@@ -6,7 +6,7 @@ import type { HassConnection, Rule, SubscribeEvent } from '../src/types.js';
 function rule(overrides: Partial<Rule> = {}): Rule {
   return {
     id: '01ABC',
-    target: 'light.kitchen',
+    targets: ['light.kitchen'],
     source: 'sensor.temp',
     mode: 'mapping',
     mapping: { on: { color: '#fff' } },
@@ -54,7 +54,7 @@ class FakeConnection implements HassConnection {
 describe('RuleStore', () => {
   it('hydrates from initial list on connect', async () => {
     const conn = new FakeConnection();
-    conn.initialRules = [rule(), rule({ id: '02XYZ', target: 'light.b' })];
+    conn.initialRules = [rule(), rule({ id: '02XYZ', targets: ['light.b'] })];
     const store = new RuleStore();
     await store.connect(conn);
     expect(store.all()).to.have.lengthOf(2);
@@ -68,7 +68,7 @@ describe('RuleStore', () => {
     conn.emit({
       type: 'added',
       id: '03',
-      rule: rule({ id: '03', target: 'light.c' }),
+      rule: rule({ id: '03', targets: ['light.c'] }),
     });
     expect(store.byTarget('light.c')).to.have.lengthOf(1);
   });
@@ -145,7 +145,7 @@ describe('RuleStore localStorage cache', () => {
 
   it('connect writes the server snapshot to cache', async () => {
     const conn = new FakeConnection();
-    conn.initialRules = [rule({ id: '01' }), rule({ id: '02', target: 'light.b' })];
+    conn.initialRules = [rule({ id: '01' }), rule({ id: '02', targets: ['light.b'] })];
     const store = new RuleStore();
     await store.connect(conn);
 
@@ -157,7 +157,7 @@ describe('RuleStore localStorage cache', () => {
   it('hydrateFromCache loads previously-cached rules synchronously', async () => {
     // Prime the cache via a first session.
     const conn1 = new FakeConnection();
-    conn1.initialRules = [rule({ id: '01', target: 'light.a' })];
+    conn1.initialRules = [rule({ id: '01', targets: ['light.a'] })];
     const store1 = new RuleStore();
     await store1.connect(conn1);
 
@@ -172,7 +172,7 @@ describe('RuleStore localStorage cache', () => {
     // Cache has rule A; server says rule B exists instead. Connect wins.
     localStorage.setItem(
       CACHE_KEY,
-      JSON.stringify({ rules: [rule({ id: 'stale', target: 'light.gone' })] })
+      JSON.stringify({ rules: [rule({ id: 'stale', targets: ['light.gone'] })] })
     );
 
     const store = new RuleStore();
@@ -180,7 +180,7 @@ describe('RuleStore localStorage cache', () => {
     expect(store.byTarget('light.gone')).to.have.lengthOf(1);
 
     const conn = new FakeConnection();
-    conn.initialRules = [rule({ id: 'fresh', target: 'light.new' })];
+    conn.initialRules = [rule({ id: 'fresh', targets: ['light.new'] })];
     await store.connect(conn);
 
     expect(store.byTarget('light.gone')).to.have.lengthOf(0);

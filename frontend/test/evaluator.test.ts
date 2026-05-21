@@ -11,7 +11,7 @@ import type { Rule } from '../src/types.js';
 function rule(overrides: Partial<Rule> = {}): Rule {
   return {
     id: '01',
-    target: 'light.kitchen',
+    targets: ['light.kitchen'],
     source: 'sensor.temp',
     mode: 'mapping',
     mapping: { on: { color: '#fff' } },

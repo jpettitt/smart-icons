@@ -273,6 +273,167 @@ async def test_injector_missing_attribute_is_noop(
     assert ATTR_SMART_ICONS_COLOR not in state.attributes
 
 
+async def test_injector_applies_to_multiple_literal_targets(
+    hass, config_entry  # noqa: ARG001
+):
+    """A rule with a `targets` list decorates each entity in the list."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    hass.states.async_set("light.living_room", "on")
+    hass.states.async_set("light.bedroom", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "targets": ["light.kitchen", "light.living_room", "light.bedroom"],
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#001144", "icon": "mdi:movie-open"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    for target in ("light.kitchen", "light.living_room", "light.bedroom"):
+        state = hass.states.get(target)
+        assert state.attributes[ATTR_ICON] == "mdi:movie-open"
+        assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#001144"
+
+
+async def test_injector_resolves_glob_targets(
+    hass, config_entry  # noqa: ARG001
+):
+    """Glob patterns in `targets` expand to matching entities."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen_main", "on")
+    hass.states.async_set("light.kitchen_under_cabinet", "on")
+    hass.states.async_set("light.bedroom", "on")  # shouldn't match
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "targets": ["light.kitchen_*"],
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#001144"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert (
+        hass.states.get("light.kitchen_main").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#001144"
+    )
+    assert (
+        hass.states.get("light.kitchen_under_cabinet")
+        .attributes[ATTR_SMART_ICONS_COLOR]
+        == "#001144"
+    )
+    # bedroom doesn't match the glob — unaffected.
+    assert (
+        ATTR_SMART_ICONS_COLOR not in hass.states.get("light.bedroom").attributes
+    )
+
+
+async def test_injector_mixed_literal_and_glob_targets(
+    hass, config_entry  # noqa: ARG001
+):
+    """A targets list can mix literal entity ids and glob patterns."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen_main", "on")
+    hass.states.async_set("light.bedroom", "on")
+    hass.states.async_set("switch.amp", "on")  # literal target
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "targets": ["light.kitchen_*", "switch.amp"],
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#001144"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert (
+        hass.states.get("light.kitchen_main").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#001144"
+    )
+    assert (
+        hass.states.get("switch.amp").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#001144"
+    )
+    assert (
+        ATTR_SMART_ICONS_COLOR not in hass.states.get("light.bedroom").attributes
+    )
+
+
+async def test_injector_per_target_source_uses_each_target_state(
+    hass, config_entry  # noqa: ARG001
+):
+    """Multi-target rule with no explicit source: each target's own
+    state drives its own decoration."""
+    hass.states.async_set("light.kitchen", "on")
+    hass.states.async_set("light.bedroom", "off")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "targets": ["light.kitchen", "light.bedroom"],
+            "mode": "mapping",
+            "mapping": {
+                "on": {"color": "#00ff00", "icon": "mdi:lightbulb-on"},
+                "off": {"color": "#888888", "icon": "mdi:lightbulb-off"},
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    # Each target evaluates against its own state.
+    assert (
+        hass.states.get("light.kitchen").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#00ff00"
+    )
+    assert hass.states.get("light.kitchen").attributes[ATTR_ICON] == "mdi:lightbulb-on"
+    assert (
+        hass.states.get("light.bedroom").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#888888"
+    )
+    assert hass.states.get("light.bedroom").attributes[ATTR_ICON] == "mdi:lightbulb-off"
+
+
+async def test_injector_per_target_with_source_attribute(
+    hass, config_entry  # noqa: ARG001
+):
+    """source_attribute combined with per-target: each target reads its
+    own state.attributes[source_attribute]."""
+    hass.states.async_set("light.bright", "on", {"brightness": 200})
+    hass.states.async_set("light.dim", "on", {"brightness": 40})
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "targets": ["light.bright", "light.dim"],
+            "source_attribute": "brightness",
+            "mode": "thresholds",
+            "thresholds": [
+                {"lt": 100, "color": "#003311"},
+                {"color": "#ffff00"},
+            ],
+        }
+    )
+    await hass.async_block_till_done()
+
+    # Per-target evaluation reads each target's own brightness attribute.
+    assert (
+        hass.states.get("light.bright").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#ffff00"
+    )
+    assert (
+        hass.states.get("light.dim").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#003311"
+    )
+
+
 async def test_injector_no_op_when_rule_disabled(
     hass, config_entry  # noqa: ARG001
 ):

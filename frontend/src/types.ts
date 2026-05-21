@@ -25,7 +25,12 @@ export type RuleMode = 'thresholds' | 'mapping' | 'template';
 
 export interface Rule {
   id: string;
-  target: string;
+  /** List of target entities or glob patterns. Each entry is either a
+   *  literal `domain.object_id` or a pattern containing `*` / `?` /
+   *  `[...]` that the backend injector resolves against `hass.states`
+   *  at apply time. v0.1.x rules with a singular `target: string` are
+   *  auto-migrated to `targets: [target]` on load. */
+  targets: string[];
   source: string;
   /** When set, the injector reads this attribute on `source` rather than
    *  the entity's state. Lets rules drive off numeric attributes like

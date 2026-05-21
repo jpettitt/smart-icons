@@ -11,6 +11,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.components import websocket_api
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant, callback
 
 from .const import (
@@ -24,7 +25,7 @@ from .const import (
 )
 from .rule import Rule
 
-INTEGRATION_VERSION = "0.1.0"
+INTEGRATION_VERSION = "0.2.0b1"
 
 
 def async_register_commands(hass: HomeAssistant) -> None:
@@ -127,7 +128,7 @@ def _ws_version(
         msg["id"],
         {
             "integration": INTEGRATION_VERSION,
-            "ha_version": hass.config.as_dict().get("version", ""),
+            "ha_version": HA_VERSION,
             "schema_version": 1,
         },
     )
