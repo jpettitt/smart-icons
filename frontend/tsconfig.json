@@ -7,6 +7,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "lib": ["es2022", "dom", "dom.iterable"],
+    "types": ["mocha"],
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitOverride": true,
