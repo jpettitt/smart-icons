@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.2.0b2 — 2026-05-21
+
+Second beta. Three fixes from real-world use of v0.2.0b1.
+
+### Bug fixes
+
+- **Color stays stale until you switch dashboards.** When the
+  backend wrote a new `smart_icons_color`, the painter and HA's
+  card Lit re-render were both microtask-scheduled in the same
+  tick with no ordering guarantee. The painter often ran first and
+  read the previous `host.stateObj.attributes.smart_icons_color`,
+  leaving the icon's color stuck until the user navigated away
+  and back. (Icon glyph updated fine because HA's native render
+  reads `state.attributes.icon` on the later re-render.) The
+  state-watcher now caches the full attribute bag synchronously
+  inside the event dispatch; the painter reads color from there
+  instead of from the host's stateObj. Race eliminated.
+- **Glob rules don't apply after HA restart.** Targets with a
+  glob (e.g. `lock.*`) reverted to default icons and colors after
+  HA restart until the user switched dashboards. On integration
+  setup, globs were resolved against `hass.states.async_entity_ids()`
+  — mostly empty right after restart because the entity-owning
+  integrations haven't published yet. The entities arrived
+  seconds later but nothing triggered a re-evaluation
+  (`entity_registry_updated` doesn't fire because the registry
+  entries persist across restarts). The injector now also listens
+  for `state_changed` events filtered on `old_state is None`
+  ("entity just appeared"); when one matches an enabled glob
+  rule the source subscription is rebuilt and the rule is applied
+  immediately.
+
+### What's new
+
+- **State autocomplete in the mapping editor.** Each mapping-key
+  cell now offers a `<datalist>` of states the resolved source
+  entity has actually been observed in — the last 7 days of
+  recorder history plus the current state. Cached per entity.
+  Falls back to just the current state when the recorder is
+  disabled. Speeds up authoring mapping rules for entities with
+  non-obvious state vocabularies (`lock`'s `locking` / `unlocking`,
+  `alarm_control_panel`'s mode names, etc.).
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.2.0b1...v0.2.0b2>
+
 ## v0.2.0b1 — 2026-05-20
 
 **Beta release.** Feature-complete for the v0.2 line but not yet
