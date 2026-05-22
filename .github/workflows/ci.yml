@@ -9,15 +9,21 @@ on:
 # Both jobs are cheap (< 1 minute each on a clean runner) and fully
 # independent — backend doesn't share build state with the frontend
 # bundle. Run them in parallel.
+#
+# Action references are pinned to a commit SHA (with the matching
+# release tag in a trailing comment) per GitHub's security guidance —
+# tags can be re-pointed, SHAs cannot. Bump deliberately on review of
+# the upstream changelog; do not let Dependabot auto-upgrade without
+# inspection.
 
 jobs:
   backend:
     name: pytest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: '3.13'
           cache: pip
@@ -32,9 +38,9 @@ jobs:
     name: typecheck + tests + build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
           node-version: '22'
           cache: npm
