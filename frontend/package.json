@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "@open-wc/testing": "^4.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@web/dev-server-esbuild": "^1.0.4",
     "@web/test-runner": "^0.20.0",
@@ -22,6 +23,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "js-yaml": "^4.1.1",
     "lit": "^3.3.3"
   }
 }

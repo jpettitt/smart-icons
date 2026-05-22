@@ -116,3 +116,158 @@ async def test_load_skips_corrupt_entries(hass, tmp_path, monkeypatch):
 async def test_priority_round_trips(store, priority):
     rule = await store.async_upsert(_mapping_rule(priority=priority))
     assert rule.priority == priority
+
+
+# ---- async_replace_all -------------------------------------------------
+
+
+async def test_replace_all_swaps_whole_rule_set(store):
+    """A normal replace_all updates matching ids, creates new rules,
+    and removes rules absent from the new list."""
+    a = await store.async_upsert(_mapping_rule(target="light.a"))
+    b = await store.async_upsert(_mapping_rule(target="light.b"))
+    assert {r.id for r in store.all()} == {a.id, b.id}
+
+    count = await store.async_replace_all(
+        [
+            # Keep a's id but update its content
+            {
+                "id": a.id,
+                "target": "light.a",
+                "mode": "mapping",
+                "mapping": {"on": {"color": "#00ff00"}},
+            },
+            # No id — should mint a fresh one
+            {
+                "target": "light.c",
+                "mode": "mapping",
+                "mapping": {"on": {"color": "#0000ff"}},
+            },
+            # b is omitted, so it should be removed
+        ]
+    )
+    assert count == 2
+    rules_by_target = {r.targets[0]: r for r in store.all()}
+    assert set(rules_by_target.keys()) == {"light.a", "light.c"}
+    assert rules_by_target["light.a"].id == a.id
+    assert rules_by_target["light.a"].mapping["on"]["color"] == "#00ff00"
+    assert rules_by_target["light.c"].id != a.id  # new ulid
+
+
+async def test_replace_all_preserves_created_for_matched_ids(store):
+    """When a replace_all entry has an id matching an existing rule,
+    the original `created` timestamp is preserved (only `updated`
+    advances). Mirrors async_upsert's history-preserving behavior."""
+    a = await store.async_upsert(_mapping_rule(target="light.a"))
+    original_created = a.created
+
+    await store.async_replace_all(
+        [
+            {
+                "id": a.id,
+                "target": "light.a",
+                "mode": "mapping",
+                "mapping": {"on": {"color": "#ffffff"}},
+            }
+        ]
+    )
+    refreshed = store.get(a.id)
+    assert refreshed.created == original_created
+    assert refreshed.updated != original_created
+
+
+async def test_replace_all_validation_failure_leaves_store_untouched(store):
+    """If ANY rule fails validation, the whole batch is rejected —
+    BulkReplaceError is raised and the existing rule set is unchanged.
+    This is the atomicity guarantee the panel relies on."""
+    from custom_components.smart_icons.rule import BulkReplaceError
+
+    a = await store.async_upsert(_mapping_rule(target="light.a"))
+    snapshot = {r.id: r.to_dict() for r in store.all()}
+
+    with pytest.raises(BulkReplaceError) as exc_info:
+        await store.async_replace_all(
+            [
+                # Valid
+                {
+                    "target": "light.valid",
+                    "mode": "mapping",
+                    "mapping": {"on": {"color": "#fff"}},
+                },
+                # Bad: missing mode entirely
+                {"target": "light.bad"},
+                # Valid
+                {
+                    "target": "light.also_valid",
+                    "mode": "mapping",
+                    "mapping": {"on": {"color": "#000"}},
+                },
+            ]
+        )
+    err = exc_info.value
+    assert len(err.errors) == 1
+    assert err.errors[0][0] == 1  # second rule (index 1)
+    # Store is unchanged — same single rule, same content.
+    assert {r.id: r.to_dict() for r in store.all()} == snapshot
+    assert store.get(a.id) is not None
+
+
+async def test_replace_all_empty_clears_store(store):
+    """An empty list removes every rule. The destructive behavior is
+    guarded by a confirm modal in the UI, not in the store layer."""
+    await store.async_upsert(_mapping_rule(target="light.a"))
+    await store.async_upsert(_mapping_rule(target="light.b"))
+    assert len(store.all()) == 2
+
+    count = await store.async_replace_all([])
+    assert count == 0
+    assert store.all() == []
+
+
+async def test_replace_all_fires_diff_events(store):
+    """Replace fans out `added` / `updated` / `removed` events
+    matching the diff so subscribers (frontend rule-store) can
+    reconcile incrementally — no full-refresh needed."""
+    a = await store.async_upsert(_mapping_rule(target="light.a"))
+    b = await store.async_upsert(_mapping_rule(target="light.b"))
+
+    events: list[tuple[str, str]] = []
+    store.subscribe(lambda ev, rule: events.append((ev, rule.id)))
+
+    await store.async_replace_all(
+        [
+            # Keep + update a
+            {
+                "id": a.id,
+                "target": "light.a",
+                "mode": "mapping",
+                "mapping": {"on": {"color": "#abc"}},
+            },
+            # New rule (no id)
+            {
+                "target": "light.new",
+                "mode": "mapping",
+                "mapping": {"on": {"color": "#def"}},
+            },
+            # b is dropped
+        ]
+    )
+    kinds = [ev for ev, _ in events]
+    assert "removed" in kinds
+    assert "updated" in kinds
+    assert "added" in kinds
+    # The removed event carried b's id, the updated event carried a's id.
+    assert ("removed", b.id) in events
+    assert ("updated", a.id) in events
+
+
+async def test_replace_all_rejects_non_dict_entries(store):
+    """Per-rule guard: non-mapping entries get a clean error message
+    rather than crashing the validation pipeline."""
+    from custom_components.smart_icons.rule import BulkReplaceError
+
+    with pytest.raises(BulkReplaceError) as exc_info:
+        await store.async_replace_all(["just-a-string", {"target": "x"}])
+    indices = [i for i, _ in exc_info.value.errors]
+    assert 0 in indices
+    assert any("mapping" in m for _, m in exc_info.value.errors)

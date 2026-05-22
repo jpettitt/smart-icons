@@ -4,19 +4,49 @@
  * Registered by the integration's frontend.py as a `_panel_custom`. HA
  * passes us `hass` and `narrow` as Lit properties when the panel mounts.
  *
- * v0.1 scope: table of rules (target / source / mode / enabled), with
- * Add/Edit/Delete actions backed by the WS API. Sort, search,
- * drag-reorder, live preview, and YAML import/export are v0.2+.
+ * Surfaces in v0.2: table of rules with Edit / Duplicate / YAML / Delete
+ * actions backed by the admin-only WS API; an Import YAML button in the
+ * header for adding rules pasted from a gist; a per-rule "Copy as YAML"
+ * dialog for sharing one rule. Sort, search, drag-reorder, and bulk
+ * export are still v0.3+.
  */
 
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { ref, createRef, type Ref } from 'lit/directives/ref.js';
 
 import { RuleStore } from '../rule-store.js';
 import type { Hass, Rule } from '../types.js';
 
 import './rule-editor.js';
 import { panelStyles } from './styles.js';
+import { findRuleLineRanges, rulesToYaml, yamlToImportable } from './yaml.js';
+
+interface RuleError {
+  index: number;
+  message: string;
+}
+
+interface CodeError {
+  /** Free-form message used for parse failures and connection
+   *  errors. Becomes a clickable jump-link when one of the jump
+   *  fields below is also set. May co-exist with `ruleErrors`. */
+  message?: string;
+  /** Per-rule server validation failures from a replace_all batch.
+   *  Each entry is rendered as a clickable item that focuses + selects
+   *  that rule's lines in the textarea. */
+  ruleErrors?: RuleError[];
+  /** Clicking the `message` jumps to this zero-based rule index. */
+  jumpRule?: number;
+  /** Clicking the `message` jumps to this 1-indexed line in the
+   *  textarea. Used for YAML syntax errors and shape errors that
+   *  pin to a specific source line. */
+  jumpLine?: number;
+  /** Optional 1-indexed column alongside `jumpLine`. When present,
+   *  the cursor is placed at that column (no selection); otherwise
+   *  the whole line is selected. */
+  jumpColumn?: number;
+}
 
 @customElement('smart-icons-panel')
 export class SmartIconsPanel extends LitElement {
@@ -31,12 +61,36 @@ export class SmartIconsPanel extends LitElement {
   @state() private editorError = '';
   @state() private pendingDelete: Rule | null = null;
   // Cleared on next successful action or when the user dismisses it.
-  // Used for failures from out-of-dialog actions (toggle, delete) where
-  // there's no inline error surface — the editor has its own errorMessage.
+  // Used for failures from out-of-dialog actions (toggle, delete, import)
+  // where there's no inline error surface — the editor has its own
+  // errorMessage.
   @state() private actionError = '';
+
+  // Per-rule YAML lives inside the rule editor itself via the
+  // "Show code editor" toggle (HA automation-editor pattern).
+  // Whole-config YAML lives here on the panel via the same toggle —
+  // entering code mode dumps every rule as a top-level `rules:` list
+  // (ids included so save can match each entry to its store record);
+  // exiting via Save replaces the whole config.
+  @state() private codeMode = false;
+  @state() private codeText = '';
+  // What we wrote into codeText when entering code mode. Compared
+  // against codeText on the way back to visual to decide whether to
+  // warn about unsaved changes. Reset on enter, NOT on save — a
+  // failed save should still gate the toggle.
+  @state() private codeInitialText = '';
+  @state() private codeError: CodeError | null = null;
+  @state() private codeSubmitting = false;
+  // Set true when the user tries to leave code mode with unsaved
+  // edits. Renders a confirmation modal; the actual toggle only
+  // fires after the user clicks Discard.
+  @state() private pendingDiscard = false;
 
   private store?: RuleStore;
   private unsubscribe?: () => void;
+  // Ref into the panel-level YAML textarea so per-rule error items
+  // can focus + select-range to highlight the failing rule.
+  private codeTextareaRef: Ref<HTMLTextAreaElement> = createRef();
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -54,7 +108,9 @@ export class SmartIconsPanel extends LitElement {
       <ha-card>
         <header>
           <h1>Smart Icons</h1>
-          <ha-button raised @click=${this.addRule}>+ Add rule</ha-button>
+          ${this.codeMode
+            ? nothing
+            : html`<ha-button raised @click=${this.addRule}>+ Add rule</ha-button>`}
         </header>
         ${this.actionError
           ? html`
@@ -68,11 +124,187 @@ export class SmartIconsPanel extends LitElement {
               </div>
             `
           : nothing}
-        ${this.rules.length === 0 ? this.renderEmpty() : this.renderTable()}
+        ${this.codeMode ? this.renderCodeView() : this.renderVisualView()}
       </ha-card>
       ${this.dialogOpen ? this.renderDialog() : nothing}
       ${this.pendingDelete ? this.renderDeleteConfirm() : nothing}
+      ${this.pendingDiscard ? this.renderDiscardConfirm() : nothing}
     `;
+  }
+
+  /** Visual mode: the existing table (or empty state) plus a
+   *  "Show code editor" text toggle at the bottom-left. */
+  private renderVisualView() {
+    return html`
+      ${this.rules.length === 0 ? this.renderEmpty() : this.renderTable()}
+      <div class="panel-actions">
+        <button
+          type="button"
+          class="text-toggle"
+          @click=${this.toggleCodeView}
+        >
+          Show code editor
+        </button>
+      </div>
+    `;
+  }
+
+  /** Code mode: full-width YAML textarea + sticky bottom bar with the
+   *  toggle on the left and a Save button on the right. Save sends
+   *  the whole `rules:` list through the atomic `replace_all` WS
+   *  command — server validates everything before touching storage,
+   *  so existing rules are never partially updated on failure. */
+  private renderCodeView() {
+    return html`
+      <textarea
+        class="yaml-area panel-yaml"
+        spellcheck="false"
+        ${ref(this.codeTextareaRef)}
+        .value=${this.codeText}
+        @input=${(e: Event) => {
+          this.codeText = (e.target as HTMLTextAreaElement).value;
+          // Any keystroke means the user is reacting to the previous
+          // error — clear it so the inline-error block doesn't linger.
+          if (this.codeError) this.codeError = null;
+        }}
+        ?disabled=${this.codeSubmitting}
+      ></textarea>
+      ${this.codeError ? this.renderCodeError(this.codeError) : nothing}
+      <div class="panel-actions">
+        <button
+          type="button"
+          class="text-toggle"
+          @click=${this.toggleCodeView}
+          ?disabled=${this.codeSubmitting}
+        >
+          Show visual editor
+        </button>
+        <ha-button
+          variant="brand"
+          ?disabled=${this.codeSubmitting || !this.codeText.trim()}
+          @click=${this.saveCodeChanges}
+        >${this.codeSubmitting ? 'Saving…' : 'Save'}</ha-button>
+      </div>
+    `;
+  }
+
+  /** Inline error block under the YAML textarea. Always shows a
+   *  "rules unchanged" header so atomicity is explicit, then renders
+   *  either a per-rule clickable list (server validation failures)
+   *  or a single message (parse errors, transport failures). The
+   *  single message becomes clickable when we have a jump target. */
+  private renderCodeError(err: CodeError) {
+    const hasRuleErrors = err.ruleErrors && err.ruleErrors.length > 0;
+    const header = hasRuleErrors
+      ? 'Save aborted — rules unchanged.'
+      : 'Rules unchanged.';
+    return html`
+      <div class="inline-error" role="alert">
+        <div class="inline-error-message">${header}</div>
+        ${hasRuleErrors
+          ? html`
+              <ul class="rule-error-list">
+                ${err.ruleErrors!.map(
+                  (e) => html`
+                    <li>
+                      ${this.renderClickableError(
+                        `Rule ${e.index + 1}: ${e.message}`,
+                        () => this.jumpToRule(e.index),
+                      )}
+                    </li>
+                  `,
+                )}
+              </ul>
+            `
+          : nothing}
+        ${err.message
+          ? this.renderMessageMaybeClickable(err)
+          : nothing}
+      </div>
+    `;
+  }
+
+  /** Render the free-form message either as a clickable jump-link
+   *  (when err has a jumpRule or jumpLine target) or as plain text. */
+  private renderMessageMaybeClickable(err: CodeError) {
+    const handler = this.jumpHandlerFor(err);
+    if (handler) {
+      return this.renderClickableError(err.message!, handler);
+    }
+    return html`<div class="inline-error-message">${err.message}</div>`;
+  }
+
+  /** Shared "▸ clickable error" UI used for both per-rule items and
+   *  the single-message-with-jump case. */
+  private renderClickableError(text: string, handler: () => void) {
+    return html`
+      <button
+        type="button"
+        class="rule-error-item"
+        @click=${handler}
+        title="Jump to the error"
+      >${text}</button>
+    `;
+  }
+
+  /** Return the jump handler implied by an error's location fields,
+   *  or null if there's nothing to jump to. */
+  private jumpHandlerFor(err: CodeError): (() => void) | null {
+    if (err.jumpRule !== undefined) {
+      const idx = err.jumpRule;
+      return () => this.jumpToRule(idx);
+    }
+    if (err.jumpLine !== undefined) {
+      const line = err.jumpLine;
+      const col = err.jumpColumn;
+      return () => this.jumpToLine(line, col);
+    }
+    return null;
+  }
+
+  /** Focus the textarea and select the lines of the given rule.
+   *  Falls back to a no-op if the YAML is in a shape we can't parse
+   *  line-by-line (flow style, etc) — the error text is still
+   *  visible, just not clickable-to-highlight. */
+  private jumpToRule(ruleIndex: number): void {
+    const ta = this.codeTextareaRef.value;
+    if (!ta) return;
+    const ranges = findRuleLineRanges(ta.value);
+    const range = ranges[ruleIndex];
+    if (!range) return;
+    const lines = ta.value.split('\n');
+    let startChar = 0;
+    for (let i = 0; i < range.start; i++) startChar += lines[i].length + 1;
+    let endChar = startChar;
+    for (let i = range.start; i < range.end; i++) {
+      endChar += lines[i].length + 1;
+    }
+    endChar = Math.min(endChar, ta.value.length);
+    ta.focus();
+    ta.setSelectionRange(startChar, endChar);
+  }
+
+  /** Focus the textarea and either place the caret at (line, column)
+   *  or select the whole line when no column is given. Used for YAML
+   *  syntax errors and shape errors that pin to a single source line.
+   *  Line and column are 1-indexed to match the user-visible
+   *  `Line N, col C` format. */
+  private jumpToLine(line: number, column?: number): void {
+    const ta = this.codeTextareaRef.value;
+    if (!ta) return;
+    const lines = ta.value.split('\n');
+    if (line < 1 || line > lines.length) return;
+    const lineIdx = line - 1;
+    let lineStart = 0;
+    for (let i = 0; i < lineIdx; i++) lineStart += lines[i].length + 1;
+    const lineEnd = lineStart + lines[lineIdx].length;
+    ta.focus();
+    if (column && column >= 1 && column <= lines[lineIdx].length + 1) {
+      const offset = lineStart + (column - 1);
+      ta.setSelectionRange(offset, offset);
+    } else {
+      ta.setSelectionRange(lineStart, lineEnd);
+    }
   }
 
   private clearActionError = (): void => {
@@ -327,6 +559,145 @@ export class SmartIconsPanel extends LitElement {
   private cancelDelete = (): void => {
     this.pendingDelete = null;
   };
+
+  // ---- whole-config YAML mode ----
+
+  private toggleCodeView = (): void => {
+    if (this.codeSubmitting) return;
+    if (this.codeMode) {
+      // Code → Visual. If the textarea differs from what we wrote
+      // into it on entry, gate the toggle behind a confirm — losing
+      // unsaved edits because of a misclick would be a nasty
+      // surprise. No diff → toggle immediately.
+      if (this.codeText !== this.codeInitialText) {
+        this.pendingDiscard = true;
+        return;
+      }
+      this.exitCodeMode();
+    } else {
+      // Visual → Code: snapshot every current rule into one YAML
+      // document. No ids — the `replace_all` save mints fresh ones
+      // server-side for the new rule set.
+      const text = rulesToYaml(this.rules);
+      this.codeText = text;
+      this.codeInitialText = text;
+      this.codeError = null;
+      this.codeMode = true;
+    }
+  };
+
+  /** Exit code mode without committing. Also clears any pending
+   *  discard-confirm in case we got here via the modal. */
+  private exitCodeMode(): void {
+    this.codeMode = false;
+    this.codeError = null;
+    this.pendingDiscard = false;
+  }
+
+  private renderDiscardConfirm() {
+    return html`
+      <ha-dialog
+        open
+        heading="Discard changes?"
+        @closed=${this.cancelDiscard}
+      >
+        <p>
+          You have unsaved changes in the code editor. Switching back
+          to the visual editor will discard them.
+        </p>
+        <ha-button slot="secondaryAction" @click=${this.cancelDiscard}
+          >Cancel</ha-button
+        >
+        <ha-button
+          slot="primaryAction"
+          variant="danger"
+          @click=${this.confirmDiscard}
+          >Discard</ha-button
+        >
+      </ha-dialog>
+    `;
+  }
+
+  private cancelDiscard = (): void => {
+    this.pendingDiscard = false;
+  };
+
+  private confirmDiscard = (): void => {
+    this.exitCodeMode();
+  };
+
+  /** Save the whole-config YAML as the new configuration.
+   *
+   *  Atomic via the backend's `smart_icons/replace_all` command:
+   *  the server validates every rule first and only swaps storage if
+   *  all pass. On failure, the existing rules are left untouched and
+   *  the response carries per-rule error indices we render as
+   *  clickable items below the textarea.
+   *
+   *  Failure modes the user can see:
+   *    - Parse error (client-side, before WS call) — single message.
+   *    - Per-rule validation (server `rule_errors`) — clickable list,
+   *      first failure auto-selected in the textarea.
+   *    - Transport / unknown error — single message ending in
+   *      "Rules unchanged" so atomicity is explicit. */
+  private saveCodeChanges = async (): Promise<void> => {
+    const parsed = yamlToImportable(this.codeText);
+    if (parsed.parseError) {
+      // Client-side parse / shape failure — surface the location
+      // (line/col or rule index) so the message is clickable and we
+      // can auto-jump the textarea selection to the problem.
+      this.codeError = {
+        message: parsed.parseError,
+        jumpLine: parsed.errorLine,
+        jumpColumn: parsed.errorColumn,
+        jumpRule: parsed.errorRuleIndex,
+      };
+      void this.updateComplete.then(() => this.autoJumpToFirstError());
+      return;
+    }
+    this.codeError = null;
+    this.codeSubmitting = true;
+    try {
+      await this.hass.connection.sendMessagePromise({
+        type: 'smart_icons/replace_all',
+        rules: parsed.rules,
+      });
+      this.codeSubmitting = false;
+      this.exitCodeMode();
+      this.actionError = `Saved ${parsed.rules.length} rule${parsed.rules.length === 1 ? '' : 's'}.`;
+    } catch (err) {
+      this.codeSubmitting = false;
+      // The server's replace_all error frame can include a
+      // `rule_errors` array. home-assistant-js-websocket rejects the
+      // promise with the `error` object body, so the fields land on
+      // `err` directly.
+      const e = err as {
+        rule_errors?: RuleError[];
+        message?: string;
+      };
+      if (e.rule_errors && e.rule_errors.length > 0) {
+        this.codeError = { ruleErrors: e.rule_errors };
+      } else {
+        this.codeError = { message: this.errorMessage(err) };
+      }
+      void this.updateComplete.then(() => this.autoJumpToFirstError());
+    }
+  };
+
+  /** After codeError is set, focus the textarea on whichever error
+   *  came first — the first ruleError if there's a list, otherwise
+   *  the single message's jump target if it has one. No-op when
+   *  there's no location to jump to (e.g. plain transport error). */
+  private autoJumpToFirstError(): void {
+    const err = this.codeError;
+    if (!err) return;
+    if (err.ruleErrors && err.ruleErrors.length > 0) {
+      this.jumpToRule(err.ruleErrors[0].index);
+      return;
+    }
+    const handler = this.jumpHandlerFor(err);
+    if (handler) handler();
+  }
 
   private confirmDelete = async (): Promise<void> => {
     const rule = this.pendingDelete;

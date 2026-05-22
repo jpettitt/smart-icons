@@ -11,6 +11,7 @@ STORAGE_MINOR_VERSION = 1
 WS_LIST = f"{DOMAIN}/list"
 WS_UPSERT = f"{DOMAIN}/upsert"
 WS_DELETE = f"{DOMAIN}/delete"
+WS_REPLACE_ALL = f"{DOMAIN}/replace_all"
 WS_SUBSCRIBE = f"{DOMAIN}/subscribe"
 WS_VERSION = f"{DOMAIN}/version"
 

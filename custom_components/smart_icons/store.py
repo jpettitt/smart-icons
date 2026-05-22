@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.ulid import ulid_now
 
 from .const import STORAGE_KEY, STORAGE_MINOR_VERSION, STORAGE_VERSION
-from .rule import Rule, validate_rule
+from .rule import BulkReplaceError, Rule, validate_rule
 
 Listener = Callable[[str, Rule], None]
 
@@ -108,6 +108,78 @@ class RuleStore:
         await self.async_save()
         self._notify("removed", rule)
         return True
+
+    async def async_replace_all(
+        self, raw_rules: list[dict[str, Any]]
+    ) -> int:
+        """Atomically replace the entire rule set.
+
+        Validates every incoming rule *before* touching state. On any
+        validation failure, raises `BulkReplaceError` with per-rule
+        details and leaves the store untouched — this is the all-or-
+        nothing semantic the panel's YAML editor relies on.
+
+        On success: swaps the in-memory cache, persists once via
+        `async_save`, then fires `added` / `updated` / `removed`
+        events to subscribers so the frontend rule-store reconciles
+        in one update wave.
+
+        Returns the number of rules in the new set.
+        """
+        # Phase 1 — validate everything. Any per-rule failures get
+        # collected with their index so the frontend can highlight
+        # the specific offending rule(s) in the YAML editor.
+        validated: list[Rule] = []
+        errors: list[tuple[int, str]] = []
+        for idx, raw in enumerate(raw_rules):
+            if not isinstance(raw, dict):
+                errors.append((idx, "rule must be a YAML mapping"))
+                continue
+            try:
+                v = validate_rule(raw)
+                r = Rule.from_dict(v)
+            except (vol.Invalid, ValueError) as exc:
+                errors.append((idx, str(exc)))
+                continue
+            validated.append(r)
+        if errors:
+            raise BulkReplaceError(errors)
+
+        # Phase 2 — assign ids and timestamps. Rules supplied with an
+        # id that matches an existing record keep their `created`
+        # stamp; everything else gets a fresh ulid + now-stamp.
+        now = dt_util.utcnow().isoformat()
+        for rule in validated:
+            if not rule.id:
+                rule.id = ulid_now()
+                rule.created = now
+            else:
+                existing = self._rules.get(rule.id)
+                rule.created = existing.created if existing else now
+            rule.updated = now
+
+        # Phase 3 — atomic swap. The on-disk write that follows is
+        # itself atomic (HA's Store writes to a .tmp + rename), so the
+        # config file is either entirely old or entirely new.
+        old_rules = dict(self._rules)
+        new_rules = {r.id: r for r in validated}
+        self._rules = new_rules
+        await self.async_save()
+
+        # Phase 4 — fan out diff events. Subscribers (the frontend
+        # rule-store, the injector) react to add/update/remove just
+        # like single upsert/delete paths, so no special-case code is
+        # needed downstream.
+        for rule_id, old_rule in old_rules.items():
+            if rule_id not in new_rules:
+                self._notify("removed", old_rule)
+        for rule_id, new_rule in new_rules.items():
+            if rule_id in old_rules:
+                self._notify("updated", new_rule)
+            else:
+                self._notify("added", new_rule)
+
+        return len(new_rules)
 
     def subscribe(self, callback_: Listener) -> Callable[[], None]:
         """Register a (event, rule) listener. Returns an unsubscribe callable."""
