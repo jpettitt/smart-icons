@@ -1,5 +1,58 @@
 # Changelog
 
+## v0.2.2b2 — 2026-05-22
+
+Second beta on the v0.2.2 line. Two fixes that close out the
+remaining "icons not painted" reports from b1 — one for an empty-
+cache race at bootstrap, one for view-switch mounts the
+MutationObserver crawler was missing. Drop-in upgrade from b1 or
+v0.2.1; no schema change.
+
+### Bug fixes
+
+- **Empty watcher cache after bootstrap on slow-loading dashboards.**
+  The watcher was copying initial state from
+  `<home-assistant>.hass.states` inside `start()`. That map is
+  populated asynchronously by HA's connection layer; on slower
+  setups it was empty when our bundle's bootstrap reached
+  `start()`, and any `state_changed` events that arrived during the
+  subscribe-handshake await were dropped on the floor. The result
+  was slow-moving entities (temperatures, locks — anything that
+  doesn't fire another state_changed for hours) staying invisible
+  to the cache permanently. The watcher now fetches authoritative
+  initial state via the `get_states` WS command, buffers any
+  events that arrive during the fetch, and drains them on top of
+  the snapshot — no race, no lost events.
+- **Icons un-painted after Lovelace view switches.** The
+  MutationObserver crawler was firing thousands of times during a
+  view swap (~3400 callbacks for a 100-icon dashboard) but our
+  scan logic walked past the new `<ha-state-icon>` elements before
+  Lit had a chance to render into their shadow roots, so they
+  never landed in `knownHosts` and never got painted. The painter
+  now also patches `ha-state-icon`'s `stateObj` property setter at
+  bootstrap (idempotent, prototype-chain-walking); every entity
+  binding that HA establishes — in any card, in any surface —
+  flows through the patched setter and applies `smart_icons_color`
+  synchronously. The DOM-crawler stays as a defensive fallback
+  for HA versions where the prototype shape may change, with a
+  one-line `console.warn` emitted when the patch can't find the
+  accessor.
+
+### Internals
+
+- Drop the unused `StateWatcher.getState()` method and `IconHost`
+  re-export from painter.ts — both were artifacts of earlier
+  iterations.
+- 96 pytest + 73 Web Test Runner tests green (+5 new for
+  `applyStateObjPatch`); typecheck clean.
+
+### Upgrade
+
+Drop-in from v0.2.2b1 or v0.2.1. Enable beta versions in HACS to
+pick it up.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.2.2b1...v0.2.2b2>
+
 ## v0.2.2b1 — 2026-05-22
 
 **Beta.** Single fix on top of v0.2.1, shipped early to verify with
