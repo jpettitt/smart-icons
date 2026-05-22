@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-Targeting **v0.2.1**.
+## v0.2.1 — 2026-05-22
 
 ### What's new
 
@@ -50,6 +48,8 @@ failure-mode UX, testing strategy).
 
 Drop-in upgrade from v0.2.0. No schema change, no migration. After
 update, restart HA.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.2.0...v0.2.1>
 
 ## v0.2.0 — 2026-05-21
 
