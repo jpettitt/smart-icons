@@ -1,8 +1,16 @@
 # YAML editing — feature design
 
-> **Status:** design. Targets v0.2.1 (phase 1) → v0.3 (phases 2 & 3).
-> Replaces the previously-roadmapped Door 3 (`configuration.yaml` block).
-> Last revised 2026-05-21.
+> **Status:** shipped on `main`, pending the v0.2.1 release.
+>
+> All three phases landed together rather than across two releases —
+> the per-rule "Show code editor" toggle and the whole-config toggle
+> share enough wiring (textarea + js-yaml + the auto-jump line/range
+> helper) that splitting them out wouldn't have been smaller code,
+> just more PRs. Implementation diverged from the original phase-1
+> sketch in a few places, called out inline in § 3 and § 5 below.
+>
+> Replaces the previously-roadmapped Door 3 (`configuration.yaml`
+> block). Last revised 2026-05-21.
 
 ## 1. Motivation
 
@@ -57,17 +65,28 @@ design) and putting all YAML interaction inside the panel.
   legacy `target` → `targets` is already done server-side at
   storage-validation time; pasted YAML using the old form still works.
 
-## 3. Phases
+## 3. Phases — as designed and as shipped
 
-| Phase | Ships in | What lands | Approx scope |
-| --- | --- | --- | --- |
-| **1 — Share & receive** | v0.2.1 | "Copy as YAML" per rule (read-only modal); "Import YAML" on panel header; accepts single rule or `rules:` list | ~150 LOC TS, 4 tests |
-| **2 — Per-rule YAML edit** | v0.3 | Form ↔ YAML toggle inside the rule editor (HA automation-editor pattern); round-trips back to the form on save | ~250 LOC TS, +4 tests |
-| **3 — Bulk export + replace mode** | v0.3 | "Export all rules" → modal with full `rules:` list ready to copy; "Import" gains "Append / Replace all" toggle (replace requires typed confirmation) | ~350 LOC TS, +4 tests |
+The design split the work across two releases. In implementation, all
+three landed at once on `main`. The original phase table is preserved
+as historical context; the "shipped as" column captures what the user
+actually sees.
 
-Each phase is independent: phase 1 can ship in a point release without
-needing phases 2 or 3. The library (js-yaml) and the serializer added
-in phase 1 are reused by 2 and 3 — no rewrites.
+| Phase | As designed | As shipped |
+| --- | --- | --- |
+| **1 — Share & receive** | "Copy as YAML" per-rule modal + "Import YAML" header button | Subsumed by phase 2: the per-rule "Show code editor" toggle exposes the same YAML in an editable textarea (copy is just Cmd-A / Cmd-C). The header Import button was dropped — pasting over the default content inside a fresh rule's code editor is HA's convention and avoids a redundant modal. |
+| **2 — Per-rule YAML edit** | Form ↔ YAML toggle in the rule editor | Shipped as described. Toggle is a plain-text "Show code editor" / "Show visual editor" link in the editor's action bar; round-trips both directions, with parse errors blocking the code-to-visual hop. |
+| **3 — Bulk export + replace** | "Export all rules" + Append/Replace toggle | Replaced by a panel-level "Show code editor" toggle that's symmetric with the per-rule one. Whole-config view ⇒ implicit export. Save ⇒ implicit replace, via a new server-side `smart_icons/replace_all` WS command that's atomic (validates the whole batch before touching storage). The "Append" mode was dropped — users who want to add to an existing config edit the existing YAML. |
+
+Net effect: a single mental model — *toggle to YAML, edit, save* —
+applied at two scopes (one rule or all rules), instead of the two
+separate "copy/paste" and "edit-in-place" flows the original design
+proposed.
+
+The `smart_icons/replace_all` backend command was added during phase 3
+implementation; the original "no backend changes needed" claim in
+§ 6.3 turned out to be incorrect once the atomic-save guarantee
+became a hard requirement. See § 6.3 for the updated note.
 
 ## 4. YAML schema
 
@@ -302,15 +321,46 @@ deterministically so the same rule always produces the same YAML
 
 ### 6.3 Backend changes
 
-**None.** All YAML handling is in the panel. The existing WS API
-already accepts rule dicts via `smart_icons/upsert`; phase 1 just
-sends N upserts for an N-rule import. The server already validates
-each rule, so import errors are reported back through the WS error
-channel and surfaced in the import dialog.
+**Updated during implementation.** The original sketch said "none —
+N upserts cover it." Once the atomic-save requirement landed (every
+rule in the YAML lands together or nothing changes), the per-rule
+upsert loop wasn't enough: a partial failure left the store in a
+mixed state.
 
-This is the same reason a `configuration.yaml` loader is no longer
-needed — the WS endpoint *is* the integration's "schema-aware
-import endpoint."
+What ended up shipping:
+
+- `WS_REPLACE_ALL = "smart_icons/replace_all"` — admin-gated
+  WS command. Takes `{ rules: [<rule>, ...] }`. Server validates
+  every rule first; on success, swaps the in-memory cache and
+  persists once via `Store.async_save`, then fans out
+  add/update/remove events to subscribers. On any per-rule
+  failure: raises `BulkReplaceError` with the offending indices,
+  storage untouched.
+- `BulkReplaceError` — new exception type in `rule.py` carrying
+  `errors: list[tuple[int, str]]`. The WS handler renders it as a
+  custom error frame so the frontend can render per-rule clickable
+  errors:
+
+  ```jsonc
+  {
+    "type": "result",
+    "success": false,
+    "error": {
+      "code": "invalid_format",
+      "message": "One or more rules failed validation",
+      "rule_errors": [
+        { "index": 2, "message": "targets[0] not a valid entity id" }
+      ]
+    }
+  }
+  ```
+
+  HA's `connection.send_error` doesn't support extra fields, so the
+  handler hand-builds the result frame to attach `rule_errors`.
+
+The original "WS API is the import endpoint" framing still holds —
+just with two endpoints now: `upsert` for single-rule edits from the
+form view, `replace_all` for whole-config code-view saves.
 
 ### 6.4 Phase 2 form ↔ YAML round-trip
 
@@ -431,14 +481,13 @@ YAML and retry without losing their pasted content.
    Recommend: ship phase 2 with the plain textarea; revisit
    syntax highlighting as a separate v0.3+ polish item if users ask.
 
-## 11. Rollout
+## 11. Rollout — as shipped
 
-- **v0.2.1** — Phase 1 only. Point release; CHANGELOG entry calls out
-  "share a rule as a gist."
-- **v0.3** — Phases 2 and 3 alongside the planned template-mode work.
-  CHANGELOG entry calls out the "Edit in YAML" toggle and bulk
-  export.
-
-If phase 1 has unexpected demand for editing pasted YAML before
-import, we can pull phase 2 forward into a v0.2.2 — the shape of
-phase 1 leaves that door open.
+- **v0.2.1** — All three phases combined. The implementation
+  realized that the per-rule editor toggle subsumed the share/import
+  flow, so collapsing the rollout was a net simplification rather
+  than a feature-creep risk. CHANGELOG entry covers the in-editor
+  toggle, the whole-config view, the atomic save, and the clickable
+  error highlighting.
+- **v0.3** — Continues as planned with template-mode evaluation
+  and Door 1 (entity settings dialog injection).
