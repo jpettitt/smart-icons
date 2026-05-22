@@ -1,6 +1,6 @@
 {
   "name": "smart-icons-frontend",
-  "version": "0.2.2-beta.2",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "Frontend bundle for the smart-icons Home Assistant integration.",

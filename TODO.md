@@ -35,16 +35,34 @@ for the full list. Highlights:
 - Integration icon (`brand/icon.png`, `icon@2x.png`) following HA's
   brands-proxy convention.
 
-## v0.2.1 — YAML editing (on main, awaiting release)
+## v0.2.1 — YAML editing ✅ shipped 2026-05-22
 
 - [x] **YAML editing — all three phases.** Per-rule "Show code editor"
   toggle in the rule editor; whole-config "Show code editor" toggle
   on the panel; atomic save via `smart_icons/replace_all`; clickable
   per-rule + per-line error highlighting; discard-changes confirm.
-  Shipped together on `main` — see
-  [`docs/yaml-editing.md`](docs/yaml-editing.md) for the design and
-  the per-phase mapping of "as designed" vs "as shipped". Pending the
-  v0.2.1 tag.
+  See [`docs/yaml-editing.md`](docs/yaml-editing.md) for the design
+  and the per-phase mapping of "as designed" vs "as shipped".
+
+## v0.2.2 — painter reliability + release plumbing ✅ shipped 2026-05-22
+
+- [x] Painter walk-up for `<state-badge>` surfaces (b1).
+- [x] `get_states` bootstrap to eliminate empty-cache race (b2).
+- [x] `ha-state-icon.stateObj` prototype patch for view-switch
+  surfaces (b2).
+- [x] Move confirm-modal buttons into dialog content (fix invisible
+  delete / discard buttons on modern `<ha-dialog>`).
+- [x] `?v=<mtime>` cache-buster on bundle URLs — fresh JS on every
+  release and every local rebuild without manual hard refresh.
+- [x] Release workflow (`.github/workflows/release.yml`) that builds
+  and attaches `smart_icons.zip` as a release asset, gated on
+  pytest + frontend tests + build-drift check. `hacs.json` declares
+  the filename so HACS pulls the asset (= visible download counter)
+  rather than the source tarball.
+- [x] Example-rules library — [`docs/examples.md`](docs/examples.md)
+  with doors, locks, NWS temperature scale, and sun-position
+  variants including a combined direction-aware + elevation-banded
+  two-rule pattern.
 
 ## v0.3 — template mode + Door 1
 

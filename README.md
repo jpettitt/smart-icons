@@ -9,16 +9,14 @@ applied across the default Lovelace cards without per-card configuration.
 [![License](https://img.shields.io/github/license/jpettitt/smart-icons?style=for-the-badge)](LICENSE)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
 
-> **Status:** v0.2.0 — GA. Feature-complete for the v0.2 line: server-side
+> **Status:** v0.2.2 — GA. Feature-complete for the v0.2 line: server-side
 > icon + color injection, sidebar management panel, multi-target and glob
 > rules, per-target source semantics, mapping-state autocomplete from
-> recorder history, admin-only management (the painter still works for
-> every user). Template-mode evaluation lands in v0.3.
->
-> **On main, awaiting v0.2.1:** in-panel YAML editing (per-rule and
-> whole-config) with atomic save and clickable error highlighting. See
-> [`docs/yaml-editing.md`](docs/yaml-editing.md) for the design and the
-> [Unreleased CHANGELOG entry](CHANGELOG.md) for what landed.
+> recorder history, in-panel YAML editing, admin-only management (the
+> painter still works for every user). Template-mode evaluation lands in
+> v0.3. See [CHANGELOG.md](CHANGELOG.md) for the v0.2.2 release notes
+> (delete-confirm fix, painter reliability, packaged release assets,
+> example rules library).
 
 ## What problem does it solve?
 
@@ -137,6 +135,9 @@ Example: recolor every kitchen light by its own brightness.
 
 (No `source` field — that's per-target semantics: each matched light reads
 its own `brightness`.)
+
+For more ready-to-paste rules covering common entity types, see
+[docs/examples.md](docs/examples.md).
 
 ## Compatibility
 

@@ -1,4 +1,84 @@
+<!-- markdownlint-disable MD024 -->
 # Changelog
+
+## v0.2.2 — 2026-05-22
+
+GA on the v0.2.2 line — promotes the painter-reliability fixes from
+the two betas, adds a missing-button fix in the delete confirm dialog,
+ships a starter pack of paste-ready example rules, and overhauls how
+releases are published. Drop-in upgrade from v0.2.1, b1, or b2; no
+schema changes.
+
+### Bug fixes since v0.2.1
+
+- **Painter walk-up for `<state-badge>` surfaces** (from b1). The
+  painter was reading `entity_id` directly from each
+  `<ha-state-icon>`'s `stateObj`, which is missing in some HA
+  surfaces — `<state-badge>` wrappers (entities-card rows, more-info
+  dialog headers) carry the `stateObj` on the wrapper and pass only
+  attribute hints down. Painter now walks up through parents (across
+  shadow boundaries) to find the first ancestor with a `stateObj`,
+  with a 12-hop guard.
+- **Empty watcher cache on slow-loading dashboards** (from b2). The
+  watcher previously seeded itself from `<home-assistant>.hass.states`,
+  which is filled asynchronously and was empty on some setups at our
+  bootstrap. It now fetches authoritative initial state via the
+  `get_states` WS command, buffers any `state_changed` events that
+  arrive during the fetch, and drains them on top of the snapshot.
+- **Icons un-painted after Lovelace view switches** (from b2). The
+  MutationObserver crawler couldn't see entity bindings Lit was about
+  to make on view swaps. The painter now also patches
+  `ha-state-icon`'s `stateObj` property setter at bootstrap
+  (idempotent, prototype-chain-walking), so every binding HA
+  establishes flows through the painter synchronously. The crawler
+  stays as a defensive fallback.
+- **Delete and discard confirm dialogs had no buttons.** Modern
+  `<ha-dialog>` dropped the `primaryAction` / `secondaryAction` slots
+  the confirm modals were targeting, so the dialog opened with text
+  but no way to confirm or cancel — leaving "edit the YAML" as the
+  only escape hatch. Buttons now live in the dialog body with a
+  dedicated action row.
+
+### What's new
+
+- **Cache-busted bundle URLs.** `smart_icons.js` and
+  `smart_icons_panel.js` now ship with `?v=<mtime>` query strings so
+  every release (and every local rebuild) busts the browser cache
+  automatically. No more "I updated but I'm still seeing old
+  behavior" after a HACS upgrade. See
+  [`custom_components/smart_icons/frontend.py`](custom_components/smart_icons/frontend.py)
+  for the mechanism.
+- **Packaged release zip, attached as a GitHub release asset.** A new
+  `release.yml` workflow runs pytest + the frontend test suite on tag
+  push, then builds and attaches a HACS-conventional
+  `smart_icons.zip`. `hacs.json` declares the filename via
+  `zip_release` so HACS pulls the asset directly — which lets the
+  release page show real download counts rather than the source
+  tarball's blank counter. Drop-in for existing HACS users; no manual
+  action required.
+- **Example-rules doc.** [`docs/examples.md`](docs/examples.md) is a
+  growing collection of paste-ready rules — door/window contact
+  sensors, locks (with a cross-source door-open override), NWS
+  temperature color scale + stale-data warning, and sun-position
+  variants (elevation banded, direction aware, and a combined
+  two-rule pattern that demonstrates how priority + selective
+  matching achieves "templated" behavior without templates). Each
+  example explains the mechanics that make it work.
+
+### Internals
+
+- 100 pytest + 73 Web Test Runner tests green (+4 new for the
+  cache-buster URL shape); typecheck clean.
+- Frontend version files bumped: `frontend/package.json` and
+  `frontend/package-lock.json` aligned to `0.2.2`.
+
+### Upgrade
+
+Drop-in from v0.2.1, v0.2.2b1, or v0.2.2b2 via HACS. The
+cache-buster query strings ensure existing browser sessions pick up
+the new bundles on next page load without a hard refresh.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.2.1...v0.2.2>
 
 ## v0.2.2b2 — 2026-05-22
 
