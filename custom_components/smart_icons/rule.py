@@ -26,6 +26,22 @@ from .const import (
     VALID_SOURCE_KINDS,
 )
 
+
+class BulkReplaceError(Exception):
+    """Per-rule validation failures collected during a bulk replace.
+
+    `errors` is a list of `(index, message)` tuples. The index is the
+    zero-based position of the failing rule in the input list — the WS
+    layer renders this back to the frontend so the editor can mark the
+    specific rule(s) that need fixing.
+    """
+
+    def __init__(self, errors: list[tuple[int, str]]) -> None:
+        self.errors = errors
+        super().__init__(
+            f"{len(errors)} rule(s) failed validation during replace_all"
+        )
+
 # A decoration field may be:
 #  - a non-empty string (color value or icon string)
 #  - one of the "release" sentinels: "", "inherit", "unset", None

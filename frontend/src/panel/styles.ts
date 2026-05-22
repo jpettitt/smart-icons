@@ -64,6 +64,126 @@ export const panelStyles = css`
     padding: 2px 8px;
     border-radius: 4px;
   }
+  /* Panel-level action bar (visual mode: just the toggle link;
+     code mode: toggle on left, Save on right). Mirrors the editor's
+     .actions bar but lives directly in the panel content rather than
+     inside a dialog. Not sticky — the panel scrolls as a whole. */
+  .panel-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--divider-color, #e0e0e0);
+  }
+  /* "Show code editor" / "Show visual editor" toggle. Plain text in
+     the primary color — matches HA's automation-editor pattern. */
+  .text-toggle {
+    background: none;
+    border: none;
+    color: var(--primary-color, #03a9f4);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.95em;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin: 0;
+  }
+  .text-toggle:hover {
+    background: var(--secondary-background-color, #f5f5f5);
+  }
+  .text-toggle:focus-visible {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: 1px;
+  }
+  .text-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  /* YAML textarea for the panel's whole-config code view. Same shape
+     as the editor's .yaml-area (the two stylesheets are scoped to
+     different shadow roots, so each one declares it once). */
+  .yaml-area {
+    width: 100%;
+    min-height: 420px;
+    max-height: 70vh;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    background: var(--code-editor-background-color, var(--card-background-color, #fff));
+    color: var(--primary-text-color, #212121);
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 4px;
+    font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.9em;
+    line-height: 1.4;
+    resize: vertical;
+    white-space: pre;
+    tab-size: 2;
+  }
+  .yaml-area:focus {
+    outline: none;
+    border-color: var(--primary-color, #03a9f4);
+  }
+  /* Inline error block below the YAML textarea (parse failures,
+     server validation failures, transport errors). Wider than the
+     table's action-error banner — this surface accepts a free-form
+     message and an optional clickable per-rule list. */
+  .inline-error {
+    margin: 12px 0 0;
+    padding: 8px 12px;
+    color: var(--warning-color, #ff9800);
+    background-color: color-mix(
+      in srgb,
+      var(--warning-color, #ff9800) 8%,
+      transparent
+    );
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  .inline-error-message {
+    white-space: pre-wrap;
+  }
+  /* Per-rule error list — clicking an item focuses the textarea and
+     selects the failing rule's lines. Render as plain buttons so the
+     whole row is the click target and keyboard navigation works. */
+  .rule-error-list {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+  }
+  .rule-error-list li {
+    margin: 2px 0;
+  }
+  .rule-error-item {
+    background: none;
+    border: none;
+    text-align: left;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 4px 6px;
+    border-radius: 3px;
+    width: 100%;
+    display: block;
+    white-space: pre-wrap;
+  }
+  .rule-error-item::before {
+    content: '▸ ';
+    font-weight: bold;
+  }
+  .rule-error-item:hover {
+    background-color: color-mix(
+      in srgb,
+      var(--warning-color, #ff9800) 16%,
+      transparent
+    );
+  }
+  .rule-error-item:focus-visible {
+    outline: 2px solid var(--warning-color, #ff9800);
+    outline-offset: 1px;
+  }
   .action-error-dismiss:hover {
     background: color-mix(
       in srgb,
@@ -589,18 +709,76 @@ export const editorStyles = css`
      panel sets the dialog content padding to 0 on the ha-dialog so
      this bar can sit flush against the dialog edge with no gap. The
      actions have their own internal padding so they stay visually
-     separated from the content. */
+     separated from the content.
+
+     Layout matches HA's automation editor: a "Show code editor" /
+     "Show visual editor" toggle on the left (text-style button),
+     Cancel + Save on the right. justify-content: space-between
+     pushes them apart with the toggle anchored left. */
   .actions {
     position: sticky;
     bottom: 0;
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
     gap: 8px;
     margin-top: 16px;
     padding: 12px 16px;
     background: var(--card-background-color, #fff);
     border-top: 1px solid var(--divider-color, #e0e0e0);
     z-index: 1;
+  }
+  .actions-right {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  /* "Show code editor" / "Show visual editor" toggle in the action bar.
+     Plain text styled with the primary color — matches HA's
+     automation-editor pattern (no button background, no border,
+     subtle hover background only). */
+  .text-toggle {
+    background: none;
+    border: none;
+    color: var(--primary-color, #03a9f4);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.95em;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin: 0;
+  }
+  .text-toggle:hover {
+    background: var(--secondary-background-color, #f5f5f5);
+  }
+  .text-toggle:focus-visible {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: 1px;
+  }
+  /* YAML textarea used by the editor's code-editor mode. Same shape
+     as the panel's import dialog (the panel duplicates this in its
+     own stylesheet — both use HA's CSS variables for theming). */
+  .yaml-area {
+    width: 100%;
+    min-height: 320px;
+    max-height: 60vh;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    background: var(--code-editor-background-color, var(--card-background-color, #fff));
+    color: var(--primary-text-color, #212121);
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 4px;
+    font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.9em;
+    line-height: 1.4;
+    resize: vertical;
+    white-space: pre;
+    tab-size: 2;
+  }
+  .yaml-area:focus {
+    outline: none;
+    border-color: var(--primary-color, #03a9f4);
   }
   .error {
     color: var(--error-color, #db4437);

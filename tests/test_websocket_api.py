@@ -7,6 +7,7 @@ import pytest
 from custom_components.smart_icons.const import (
     WS_DELETE,
     WS_LIST,
+    WS_REPLACE_ALL,
     WS_SUBSCRIBE,
     WS_UPSERT,
     WS_VERSION,
@@ -103,6 +104,116 @@ async def test_subscribe_streams_events(
     assert event["event"]["rule"]["targets"] == ["light.kitchen"]
 
 
+async def test_replace_all_success_returns_count(
+    hass, hass_ws_client, config_entry  # noqa: ARG001
+):
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": WS_REPLACE_ALL,
+            "rules": [
+                {
+                    "target": "light.a",
+                    "mode": "mapping",
+                    "mapping": {"on": {"color": "#fff"}},
+                },
+                {
+                    "target": "light.b",
+                    "mode": "mapping",
+                    "mapping": {"on": {"color": "#000"}},
+                },
+            ],
+        }
+    )
+    resp = await ws.receive_json()
+    assert resp["success"] is True
+    assert resp["result"]["count"] == 2
+
+
+async def test_replace_all_validation_failure_returns_rule_errors(
+    hass, hass_ws_client, config_entry  # noqa: ARG001
+):
+    """Per-rule failures come back under `error.rule_errors` so the
+    panel's YAML editor can highlight the specific offending rule."""
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": WS_REPLACE_ALL,
+            "rules": [
+                {
+                    "target": "light.good",
+                    "mode": "mapping",
+                    "mapping": {"on": {"color": "#fff"}},
+                },
+                # No mode — fails validation
+                {"target": "light.bad"},
+            ],
+        }
+    )
+    resp = await ws.receive_json()
+    assert resp["success"] is False
+    assert resp["error"]["code"] == "invalid_format"
+    assert "rule_errors" in resp["error"]
+    assert len(resp["error"]["rule_errors"]) == 1
+    assert resp["error"]["rule_errors"][0]["index"] == 1
+    assert "mode" in resp["error"]["rule_errors"][0]["message"].lower()
+
+
+async def test_replace_all_atomic_on_failure(
+    hass, hass_ws_client, config_entry  # noqa: ARG001
+):
+    """When a replace_all batch fails validation, the existing rules
+    in the store must be untouched — that's the contract."""
+    ws = await hass_ws_client(hass)
+    # Seed two rules through the same WS the panel uses.
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": WS_UPSERT,
+            "rule": _mapping_rule_payload(target="light.seed_a"),
+        }
+    )
+    await ws.receive_json()
+    await ws.send_json(
+        {
+            "id": 2,
+            "type": WS_UPSERT,
+            "rule": _mapping_rule_payload(target="light.seed_b"),
+        }
+    )
+    await ws.receive_json()
+
+    # Snapshot the current state.
+    await ws.send_json({"id": 3, "type": WS_LIST})
+    before = (await ws.receive_json())["result"]["rules"]
+    assert len(before) == 2
+
+    # Attempt a replace with one bad rule.
+    await ws.send_json(
+        {
+            "id": 4,
+            "type": WS_REPLACE_ALL,
+            "rules": [
+                {
+                    "target": "light.x",
+                    "mode": "mapping",
+                    "mapping": {"on": {"color": "#fff"}},
+                },
+                {"not": "a rule"},
+            ],
+        }
+    )
+    resp = await ws.receive_json()
+    assert resp["success"] is False
+
+    # Existing rules are untouched.
+    await ws.send_json({"id": 5, "type": WS_LIST})
+    after = (await ws.receive_json())["result"]["rules"]
+    assert sorted(r["id"] for r in after) == sorted(r["id"] for r in before)
+
+
 async def test_version(hass, hass_ws_client, config_entry):  # noqa: ARG001
     ws = await hass_ws_client(hass)
     await ws.send_json({"id": 1, "type": WS_VERSION})
@@ -124,6 +235,7 @@ async def test_version(hass, hass_ws_client, config_entry):  # noqa: ARG001
             "upsert",
         ),
         ({"id": 1, "type": WS_DELETE, "rule_id": "01NOPE"}, "delete"),
+        ({"id": 1, "type": WS_REPLACE_ALL, "rules": []}, "replace_all"),
         ({"id": 1, "type": WS_SUBSCRIBE}, "subscribe"),
         ({"id": 1, "type": WS_VERSION}, "version"),
     ],

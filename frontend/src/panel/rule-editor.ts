@@ -18,6 +18,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type { Hass, Rule, RuleMode, ThresholdEntry, Decoration } from '../types';
 import { editorStyles } from './styles.js';
+import { ruleToYaml, yamlToImportable } from './yaml.js';
 
 interface WorkingState {
   id?: string;
@@ -51,6 +52,14 @@ export class SmartIconsRuleEditor extends LitElement {
   @property({ type: String }) errorMessage = '';
 
   @state() private working: WorkingState = this.blankState();
+
+  /** YAML code-editor mode (HA's "Show code editor" pattern). When true,
+   *  the form is hidden and a YAML textarea is shown instead. Save in
+   *  code mode parses the YAML and dispatches the result; toggling back
+   *  to visual parses + re-hydrates the form. */
+  @state() private codeMode = false;
+  @state() private codeText = '';
+  @state() private codeError = '';
 
   /** Per-mapping-row autocomplete: states the resolved source entity
    *  has been observed in (recorder history) plus its current state.
@@ -270,6 +279,69 @@ export class SmartIconsRuleEditor extends LitElement {
         )}
       </datalist>
 
+      ${this.codeMode ? this.renderCodeView() : this.renderVisualView()}
+
+      ${this.errorMessage
+        ? html`<div class="error">${this.errorMessage}</div>`
+        : null}
+
+      <div class="actions">
+        <button
+          type="button"
+          class="text-toggle"
+          @click=${this.toggleCodeView}
+        >
+          ${this.codeMode ? 'Show visual editor' : 'Show code editor'}
+        </button>
+        <div class="actions-right">
+          <ha-button @click=${this.cancelClicked}>Cancel</ha-button>
+          <ha-button
+            variant="brand"
+            ?disabled=${this.saveDisabled}
+            @click=${this.save}
+          >Save</ha-button>
+        </div>
+      </div>
+    `;
+  }
+
+  /** The YAML textarea + parse error display, shown when codeMode is on.
+   *  Same visual treatment as the panel's Import dialog. */
+  private renderCodeView() {
+    return html`
+      <header class="dialog-header">
+        <label class="enabled-toggle">
+          <ha-switch
+            .checked=${this.working.enabled}
+            @change=${(e: Event) =>
+              this.patch({
+                enabled: (e.target as HTMLInputElement).checked,
+              })}
+          ></ha-switch>
+          <span>${this.working.enabled ? 'Enabled' : 'Disabled'}</span>
+        </label>
+      </header>
+      ${this.codeError
+        ? html`<div class="inline-error" role="alert">${this.codeError}</div>`
+        : null}
+      <textarea
+        class="yaml-area"
+        .value=${this.codeText}
+        @input=${(e: Event) => {
+          this.codeText = (e.target as HTMLTextAreaElement).value;
+          // Clear any prior parse error as soon as the user types;
+          // we'll re-validate on toggle or save.
+          if (this.codeError) this.codeError = '';
+        }}
+      ></textarea>
+    `;
+  }
+
+  /** The original form-based view (the visual editor). Identical to
+   *  what render() used to produce; pulled into a method so the YAML
+   *  toggle can swap it out cleanly. */
+  private renderVisualView() {
+    return html`
       <header class="dialog-header">
         <label class="enabled-toggle">
           <ha-switch
@@ -380,19 +452,66 @@ export class SmartIconsRuleEditor extends LitElement {
         </label>
       </section>
 
-      ${this.errorMessage
-        ? html`<div class="error">${this.errorMessage}</div>`
-        : null}
-
-      <div class="actions">
-        <ha-button @click=${this.cancelClicked}>Cancel</ha-button>
-        <ha-button
-          variant="brand"
-          ?disabled=${this.validationErrors.length > 0}
-          @click=${this.save}
-        >Save</ha-button>
-      </div>
     `;
+  }
+
+  /** True when the Save button should be disabled. In visual mode this
+   *  follows the existing form validation; in code mode it's the YAML
+   *  being empty (we parse on save and report errors then). */
+  private get saveDisabled(): boolean {
+    if (this.codeMode) return !this.codeText.trim();
+    return this.validationErrors.length > 0;
+  }
+
+  /** Toggle between the visual form and the YAML code editor.
+   *  Visual → Code: serialize the form's current state to YAML.
+   *  Code → Visual: parse the YAML and re-hydrate the form. On parse
+   *  error, the toggle is refused and the error is shown above the
+   *  textarea (matches HA's automation-editor behavior). */
+  private toggleCodeView = (): void => {
+    if (this.codeMode) {
+      // Code → Visual: parse and hydrate.
+      const { rules, parseError } = yamlToImportable(this.codeText);
+      if (parseError) {
+        this.codeError = parseError;
+        return;
+      }
+      const parsed = rules[0];
+      if (!parsed) {
+        this.codeError = 'YAML did not contain a rule.';
+        return;
+      }
+      this.working = this.hydrate(this.partialToRule(parsed));
+      this.codeMode = false;
+      this.codeError = '';
+    } else {
+      // Visual → Code: build a Rule from the form state and dump.
+      const payload = this.serialize();
+      this.codeText = ruleToYaml(this.partialToRule(payload));
+      this.codeError = '';
+      this.codeMode = true;
+    }
+  };
+
+  /** Promote a Partial<Rule> from the form serializer (or YAML parse)
+   *  back to a full Rule by filling in sensible defaults for everything
+   *  the form does not surface. Used by both toggle directions. */
+  private partialToRule(p: Partial<Rule>): Rule {
+    return {
+      id: this.working.id ?? '',
+      targets: p.targets ?? [],
+      source: p.source ?? '',
+      source_attribute: p.source_attribute ?? null,
+      mode: (p.mode ?? 'mapping') as RuleMode,
+      thresholds: p.thresholds,
+      mapping: p.mapping,
+      template: p.template,
+      enabled: p.enabled ?? true,
+      priority: p.priority ?? 10,
+      created: '',
+      updated: '',
+      source_kind: 'ui',
+    };
   }
 
   private cancelClicked = (): void => {
@@ -1035,7 +1154,31 @@ export class SmartIconsRuleEditor extends LitElement {
   // ---- save ----
 
   private save = (): void => {
-    const payload = this.serialize();
+    let payload: Partial<Rule>;
+    if (this.codeMode) {
+      // YAML is the source of truth when the code editor is open.
+      // Parse here so the error path stays inside the editor; if it
+      // fails we surface the parse error in the inline-error slot
+      // above the textarea and refuse to dispatch.
+      const { rules, parseError } = yamlToImportable(this.codeText);
+      if (parseError) {
+        this.codeError = parseError;
+        return;
+      }
+      const parsed = rules[0];
+      if (!parsed) {
+        this.codeError = 'YAML did not contain a rule.';
+        return;
+      }
+      payload = parsed;
+      // Preserve id so editing an existing rule still updates it
+      // rather than creating a new one. The YAML serializer strips id
+      // on export, so without this every YAML-edit save would mint a
+      // fresh ulid and orphan the original.
+      if (this.working.id) payload.id = this.working.id;
+    } else {
+      payload = this.serialize();
+    }
     this.dispatchEvent(
       new CustomEvent('save', {
         detail: payload,
