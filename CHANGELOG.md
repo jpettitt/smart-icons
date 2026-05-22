@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.2b1 — 2026-05-22
+
+**Beta.** Single fix on top of v0.2.1, shipped early to verify with
+HACS beta-channel users before promoting to GA.
+
+### Bug fixes
+
+- **Some icons weren't being painted.** The painter was reading
+  `entity_id` directly from each `<ha-state-icon>`'s `stateObj`
+  property, which is missing in some HA surfaces — `<state-badge>`
+  wrappers (used by the entities-card rows and more-info dialog
+  headers in particular) carry the entity's `stateObj` on the
+  wrapper itself and pass only `data-domain` / `data-state`
+  attributes down. Painter now walks up through parents (across
+  shadow boundaries) to find the first ancestor with a `stateObj`
+  when the immediate icon has none. 12-hop guard keeps the lookup
+  cheap.
+
+### Internals
+
+- Painter bundle: 3.3 KB → 3.6 KB. Panel bundle unchanged.
+- 96 pytest + 68 Web Test Runner tests green (regression test for
+  the state-badge DOM shape added).
+
+### Upgrade
+
+Drop-in from v0.2.1. Enable beta versions in HACS to pick it up.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.2.1...v0.2.2b1>
+
 ## v0.2.1 — 2026-05-22
 
 ### What's new
