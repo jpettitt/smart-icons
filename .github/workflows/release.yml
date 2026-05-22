@@ -1,0 +1,118 @@
+name: Release
+
+# Triggered by pushing a tag of the form vX.Y.Z (or a prerelease like
+# vX.Y.Zb1). The job builds a HACS-conventional zip of the integration
+# (contents of custom_components/smart_icons/, no wrapping folder) and
+# attaches it to a GitHub release. HACS picks the asset up via the
+# "filename" hint in hacs.json, which lets us track download counts —
+# something the source tarball that GitHub auto-generates does not.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # Gate the release on the same checks as ci.yml. Cheap insurance
+  # against shipping a tag whose bundle is broken.
+  test-backend:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+      - run: pip install --upgrade pip
+      - run: pip install -r requirements_test.txt
+      - run: pip install home-assistant-frontend
+      - run: pytest -q
+
+  test-frontend:
+    name: typecheck + tests + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run typecheck
+      - working-directory: frontend
+        run: npm test
+      - working-directory: frontend
+        run: npm run build
+      - name: Verify committed bundles match a fresh build
+        run: |
+          if ! git diff --quiet -- custom_components/smart_icons/static/; then
+            echo "::error::Committed bundles differ from a fresh build."
+            echo "Run 'cd frontend && npm run build' and commit the result."
+            git diff --stat -- custom_components/smart_icons/static/
+            exit 1
+          fi
+
+  release:
+    name: build zip + publish release
+    needs: [test-backend, test-frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build smart_icons.zip (HACS layout — contents of integration dir)
+        # `zip -r ../smart_icons.zip .` from inside the integration dir
+        # produces a zip whose entries are at the root (no
+        # custom_components/smart_icons/ prefix), which is what HACS
+        # expects to extract directly into the user's
+        # config/custom_components/smart_icons/ directory.
+        run: |
+          cd custom_components/smart_icons
+          zip -r ../../smart_icons.zip . -x "*.pyc" -x "__pycache__/*"
+          cd ../..
+          ls -la smart_icons.zip
+          unzip -l smart_icons.zip | head -20
+
+      - name: Extract release notes for this tag from CHANGELOG.md
+        id: notes
+        # Pull the section for the current tag out of CHANGELOG.md so the
+        # release body matches the changelog without manual copy-paste.
+        # The section runs from `## v<tag>` to the next `## ` heading.
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## v" ver "( |$|—)" { capture=1; next }
+            capture && /^## v/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "::warning::No CHANGELOG entry found for $TAG; release will publish with empty notes."
+            echo "Release $TAG" > release_notes.md
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Treat anything containing 'b', 'rc', or 'alpha' as a prerelease
+          if [[ "$TAG" =~ (b[0-9]+|rc[0-9]+|alpha) ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release with asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.notes.outputs.tag }}
+          name: ${{ steps.notes.outputs.tag }}
+          body_path: release_notes.md
+          prerelease: ${{ steps.notes.outputs.prerelease }}
+          files: smart_icons.zip
+          fail_on_unmatched_files: true

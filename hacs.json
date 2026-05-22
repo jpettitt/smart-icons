@@ -2,5 +2,7 @@
   "name": "Smart Icons",
   "render_readme": true,
   "homeassistant": "2025.1.0",
-  "iot_class": "calculated"
+  "iot_class": "calculated",
+  "zip_release": true,
+  "filename": "smart_icons.zip"
 }
