@@ -1,6 +1,6 @@
 import { expect } from '@open-wc/testing';
 
-import { Painter } from '../src/painter.js';
+import { Painter, applyStateObjPatch } from '../src/painter.js';
 
 /**
  * Build a `<ha-state-icon>` with the given entity_id and optional
@@ -201,5 +201,118 @@ describe('Painter', () => {
     painter.start();
 
     expect(getStateIcon(host).style.color).to.equal('crimson');
+  });
+});
+
+describe('applyStateObjPatch', () => {
+  // Pure form of patchHaStateIcon — takes the class directly so the
+  // test can build a fake Lit-shaped class without polluting the
+  // global customElements registry (which is permanent for the
+  // browser session and would interfere with the other painter tests).
+
+  function makeFakeIconClass(): {
+    klass: CustomElementConstructor;
+    setHistory: unknown[];
+  } {
+    // Track what HA's underlying setter receives so we can verify the
+    // patch calls through, not just shadows the property.
+    const setHistory: unknown[] = [];
+
+    // Plain class with a `stateObj` accessor on its prototype, the
+    // shape Lit's @property decorator produces. Not a true
+    // HTMLElement subclass — we don't need to register it; the patch
+    // walks `prototype`, not the registry.
+    class FakeIcon {
+      style: { color: string } = { color: '' };
+      dataset: Record<string, string | undefined> = {};
+    }
+    Object.defineProperty(FakeIcon.prototype, 'stateObj', {
+      get() {
+        return undefined;
+      },
+      set(v: unknown) {
+        setHistory.push(v);
+      },
+      enumerable: true,
+      configurable: true,
+    });
+
+    return {
+      klass: FakeIcon as unknown as CustomElementConstructor,
+      setHistory,
+    };
+  }
+
+  it('wraps the stateObj setter so smart_icons_color becomes inline color', () => {
+    const { klass } = makeFakeIconClass();
+    const result = applyStateObjPatch(klass);
+    expect(result.ok).to.be.true;
+
+    const inst = new (klass as unknown as { new (): { style: { color: string }; dataset: Record<string, string | undefined>; stateObj: unknown } })();
+    inst.stateObj = {
+      entity_id: 'sensor.foo',
+      state: '42',
+      attributes: { smart_icons_color: '#abcdef' },
+    };
+    expect(inst.style.color).to.equal('#abcdef');
+    expect(inst.dataset.smartIconsOwned).to.equal('color');
+  });
+
+  it("calls the original setter so Lit's reactive machinery still runs", () => {
+    const { klass, setHistory } = makeFakeIconClass();
+    applyStateObjPatch(klass);
+
+    const inst = new (klass as unknown as { new (): { stateObj: unknown } })();
+    const payload = { entity_id: 'sensor.bar', state: 'on', attributes: {} };
+    inst.stateObj = payload;
+    expect(setHistory).to.have.lengthOf(1);
+    expect(setHistory[0]).to.equal(payload);
+  });
+
+  it('clears color and the dataset marker when smart_icons_color is absent', () => {
+    const { klass } = makeFakeIconClass();
+    applyStateObjPatch(klass);
+
+    const inst = new (klass as unknown as { new (): { style: { color: string }; dataset: Record<string, string | undefined>; stateObj: unknown } })();
+    inst.stateObj = {
+      entity_id: 'sensor.foo',
+      state: 'on',
+      attributes: { smart_icons_color: '#abcdef' },
+    };
+    expect(inst.style.color).to.equal('#abcdef');
+
+    // Subsequent stateObj with the attribute removed — we should
+    // release the inline color and the dataset marker.
+    inst.stateObj = {
+      entity_id: 'sensor.foo',
+      state: 'on',
+      attributes: {},
+    };
+    expect(inst.style.color).to.equal('');
+    expect(inst.dataset.smartIconsOwned).to.be.undefined;
+  });
+
+  it('is idempotent — re-applying does not double-wrap', () => {
+    const { klass, setHistory } = makeFakeIconClass();
+    expect(applyStateObjPatch(klass).ok).to.be.true;
+    expect(applyStateObjPatch(klass).ok).to.be.true;
+
+    const inst = new (klass as unknown as { new (): { stateObj: unknown } })();
+    inst.stateObj = { attributes: {} };
+    // If we'd double-wrapped, the original setter would be called
+    // twice. Confirm exactly once.
+    expect(setHistory).to.have.lengthOf(1);
+  });
+
+  it('returns ok:false with a reason when stateObj is not on the prototype', () => {
+    class NoStateObj {
+      style = { color: '' };
+      dataset: Record<string, string | undefined> = {};
+    }
+    const result = applyStateObjPatch(
+      NoStateObj as unknown as CustomElementConstructor,
+    );
+    expect(result.ok).to.be.false;
+    expect(result.reason).to.match(/stateObj/);
   });
 });

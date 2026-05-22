@@ -8,29 +8,131 @@
  * is just the local DOM-side bridge that turns the attribute into an
  * actual CSS color.
  *
- * Why not read from the host's own `stateObj.attributes`?
- * On a `state_changed` event, our painter and HA's card Lit re-renders
- * are both microtask-scheduled in the same tick, and there's no
- * ordering guarantee. If the painter's microtask runs before the
- * card's, `host.stateObj` is still the previous snapshot — we paint
- * with stale data and the color appears stuck until the next
- * remount (dashboard switch, hard reload). Reading from StateWatcher
- * — which is updated synchronously inside the event dispatch, before
- * any microtask runs — removes that race.
- *
  * Icon glyph swap is NOT done here — that runs entirely server-side via
  * the standard `attributes.icon` mechanism that templated entities use.
  * The painter only exists because HA has no native attribute the
  * frontend respects for icon color.
  *
- * Discovery uses a shadow-piercing MutationObserver tree (catch-up
- * scans at 100/500/2000 ms cover late-mounted Lovelace tiles); see
- * DESIGN.md § 7.2.
+ * Two paint mechanisms run in parallel; either alone is enough on
+ * its own surfaces. Both stay in place so the rare case of one failing
+ * silently degrades to the other rather than to no-paint.
+ *
+ * 1. **Primary — `ha-state-icon.stateObj` setter patch** (see
+ *    `applyStateObjPatch` / `patchHaStateIcon` below). HA passes a
+ *    `stateObj` property to ha-state-icon for every entity binding,
+ *    in every card and surface; the wrapped setter applies
+ *    `smart_icons_color` at the exact moment of binding. No DOM
+ *    walking, no MutationObserver chain, no race against Lit's render
+ *    cycle. Discovers icons in surfaces (Lovelace view switches,
+ *    state-badge wrappers) where the crawler misses mounts.
+ *
+ * 2. **Fallback — shadow-piercing MutationObserver crawler** (the
+ *    `Painter` class below). Adopts ha-state-icon elements as they
+ *    appear in DOM, then paints via the watcher cache. Same
+ *    mechanism we shipped pre-0.2.2b2; kept for HA versions where the
+ *    primary patch may silently no-op (we emit a console warning
+ *    when that happens — see index.ts).
+ *
+ * Why not just read from the host's own `stateObj.attributes`?
+ * On a `state_changed` event, our painter and HA's card Lit re-renders
+ * are both microtask-scheduled in the same tick, and there's no
+ * ordering guarantee. The watcher cache — updated synchronously inside
+ * the event dispatch, before any microtask runs — removes that race.
  */
 
 import type { StateWatcher } from './state-watcher';
-import type { IconHost } from './types';
 import { SMART_ICONS_COLOR_ATTR } from './types';
+
+/** Marker (Symbol so it can't collide with HA-internal property names)
+ *  recorded on the class once we've wrapped its `stateObj` setter.
+ *  Re-applying is then a safe no-op. */
+const PATCH_MARKER = Symbol.for('smart-icons:patched-ha-state-icon');
+
+export interface PatchResult {
+  ok: boolean;
+  /** Why we couldn't patch, when `ok: false`. Used for the
+   *  diagnostic console warning. */
+  reason?: string;
+}
+
+/** Pure form of the patch — takes a class to patch directly so unit
+ *  tests can run against a fake class without touching the global
+ *  `customElements` registry. */
+export function applyStateObjPatch(
+  klass: CustomElementConstructor,
+): PatchResult {
+  if ((klass as unknown as Record<symbol, unknown>)[PATCH_MARKER]) {
+    return { ok: true };
+  }
+
+  // Walk the prototype chain looking for who declared `stateObj`.
+  // Lit's `@property` decorator places the accessor on the class's
+  // own prototype; if HA inherits from a base class that owns it,
+  // we walk up until we find it.
+  let proto: object | null = klass.prototype;
+  let descriptor: PropertyDescriptor | undefined;
+  let descriptorTarget: object | null = null;
+  while (proto && proto !== Object.prototype) {
+    const d = Object.getOwnPropertyDescriptor(proto, 'stateObj');
+    if (d) {
+      descriptor = d;
+      descriptorTarget = proto;
+      break;
+    }
+    proto = Object.getPrototypeOf(proto);
+  }
+  if (!descriptor?.set || !descriptorTarget) {
+    return {
+      ok: false,
+      reason: 'stateObj accessor not found on ha-state-icon prototype chain',
+    };
+  }
+
+  const origSet = descriptor.set;
+  Object.defineProperty(descriptorTarget, 'stateObj', {
+    ...descriptor,
+    set(
+      this: HTMLElement & { style: CSSStyleDeclaration; dataset: DOMStringMap },
+      v: { attributes?: Record<string, unknown> } | null | undefined,
+    ) {
+      // Call HA's setter first so Lit's reactive bookkeeping runs
+      // normally (requestUpdate, internal slot writes, etc).
+      origSet.call(this, v);
+      const raw = v?.attributes?.[SMART_ICONS_COLOR_ATTR];
+      const color = typeof raw === 'string' ? raw : '';
+      if (color) {
+        if (this.style.color !== color) this.style.color = color;
+        // Mirror the dataset marker the DOM-crawler path uses so
+        // tooling / tests can identify hosts we've painted, regardless
+        // of which code path applied the color.
+        this.dataset.smartIconsOwned = 'color';
+      } else if (this.dataset.smartIconsOwned) {
+        this.style.color = '';
+        delete this.dataset.smartIconsOwned;
+      }
+    },
+  });
+  (klass as unknown as Record<symbol, unknown>)[PATCH_MARKER] = true;
+  return { ok: true };
+}
+
+/** Patch `customElements.get('ha-state-icon')`'s stateObj setter
+ *  to apply `smart_icons_color` at the exact moment HA binds an
+ *  entity's stateObj to the icon — every surface, every card, no
+ *  DOM walking required. Returns a PatchResult so the caller can
+ *  warn on no-op.
+ *
+ *  Defensive fallback: the painter's existing DOM-crawler /
+ *  MutationObserver path stays in place. If HA refactors the
+ *  property shape and this no-ops, the crawler still handles the
+ *  surfaces it always did (most of them). */
+export function patchHaStateIcon(): PatchResult {
+  const klass = customElements.get('ha-state-icon');
+  if (!klass) {
+    return { ok: false, reason: 'ha-state-icon not defined yet' };
+  }
+  return applyStateObjPatch(klass);
+}
 
 interface IconHostWithStateObj extends HTMLElement {
   stateObj?: {
@@ -227,6 +329,3 @@ export class Painter {
     return undefined;
   }
 }
-
-// Re-export so tests can spec it explicitly.
-export type { IconHost };
