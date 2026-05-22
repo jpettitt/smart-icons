@@ -35,14 +35,18 @@ for the full list. Highlights:
 - Integration icon (`brand/icon.png`, `icon@2x.png`) following HA's
   brands-proxy convention.
 
-## v0.2.1 — point release (next)
+## v0.2.1 — YAML editing (on main, awaiting release)
 
-- [ ] **YAML editing — phase 1.** "Copy as YAML" per rule (read-only
-  modal); "Import YAML" on panel header; accepts single rule or
-  `rules:` list. Targets the "share a rule as a gist" use case.
-  Full design: [`docs/yaml-editing.md`](docs/yaml-editing.md).
+- [x] **YAML editing — all three phases.** Per-rule "Show code editor"
+  toggle in the rule editor; whole-config "Show code editor" toggle
+  on the panel; atomic save via `smart_icons/replace_all`; clickable
+  per-rule + per-line error highlighting; discard-changes confirm.
+  Shipped together on `main` — see
+  [`docs/yaml-editing.md`](docs/yaml-editing.md) for the design and
+  the per-phase mapping of "as designed" vs "as shipped". Pending the
+  v0.2.1 tag.
 
-## v0.3 — template mode, Door 1, in-editor YAML
+## v0.3 — template mode + Door 1
 
 Open items, in roughly priority order:
 
@@ -53,10 +57,6 @@ Open items, in roughly priority order:
   so individual entity pages get a "Smart Icon" section. Verify the
   `entity-registry-settings` element name and shape against current HA
   frontend source before committing to the implementation approach.
-- [ ] **YAML editing — phases 2 & 3.** "Edit in YAML" toggle in the
-  rule editor (HA automation-editor pattern); "Export all rules";
-  Append / Replace toggle on bulk import.
-  See [`docs/yaml-editing.md`](docs/yaml-editing.md).
 - [ ] Translations — en plus framework for community PRs.
 
 ## v0.4+ — polish

@@ -279,9 +279,9 @@ panel. The always-on `smart_icons.js` painter bundle stays at ~4.5 KB.
 ### 5.3 YAML editing — in the panel, not configuration.yaml
 
 The original v0.2 plan ("Door 3") was a `smart_icons:` block in
-`configuration.yaml`, loaded at startup, with YAML-sourced rules marked
-read-only in the UI (mirroring how HA treats YAML-defined automations
-and scripts).
+`configuration.yaml`, loaded at startup, with YAML-sourced rules
+marked read-only in the UI (mirroring how HA treats YAML-defined
+automations and scripts).
 
 **Superseded.** HA's own trajectory is away from `configuration.yaml`
 for feature configuration — automations, scripts, scenes, helpers,
@@ -291,18 +291,31 @@ toggle. New HA integrations don't ship YAML loaders by default.
 For Smart Icons, the user-facing motivations for YAML (sharing rules
 via gist, power-user authoring, copy-paste from someone else's
 working example) are fully covered by **in-UI YAML editing** with no
-file-system path involved. The design is split into three phases
-that ship across v0.2.1 and v0.3 — see
-[`docs/yaml-editing.md`](yaml-editing.md) for the full feature design.
+file-system path involved. Full design in
+[`docs/yaml-editing.md`](yaml-editing.md).
 
-Headline shape:
+**Status: shipped on `main`, pending the v0.2.1 release.** All three
+phases landed in one piece during implementation (the rule editor's
+toggle is naturally a superset of "copy as YAML"). The headline
+surfaces:
 
-- **Phase 1 (v0.2.1):** "Copy as YAML" per rule + bulk "Import YAML"
-  on the panel header. Solves the sharing use case.
-- **Phase 2 (v0.3):** "Edit in YAML" toggle inside the rule editor,
-  matching HA's automation-editor pattern.
-- **Phase 3 (v0.3):** "Export all rules" + an "Append / Replace all"
-  toggle on bulk import.
+- **Per-rule "Show code editor" toggle** inside the rule editor —
+  text-link next to Cancel + Save, swaps the form for a YAML
+  textarea and back. Saves in code mode parse the YAML; the rule
+  id is preserved so existing rules update in place.
+- **Whole-config "Show code editor" toggle** on the panel itself —
+  same text-link pattern at the bottom of the table. Entering code
+  mode dumps every rule as a `rules:` list ready to paste into a
+  gist; Save replaces the whole config via the new
+  `smart_icons/replace_all` WS command.
+- **Atomic save with structured per-rule errors.** The server
+  validates every rule before touching storage; failure leaves the
+  rule set unchanged. Each rule error carries its index so the
+  panel renders a clickable list — click to focus the textarea on
+  the offending rule. YAML syntax errors with line/col positions
+  get the same treatment.
+- **Discard-changes confirm** on code-to-visual when unsaved edits
+  exist.
 
 The `source_kind: "yaml"` field that was reserved for marking
 YAML-loaded rules as read-only is left in the storage schema for
@@ -858,24 +871,23 @@ smart-icons/
 - [x] HACS manifest. Integration icon via the brands-proxy convention
   (`custom_components/smart_icons/brand/`).
 
-### v0.2.1 — point release (next)
+### v0.2.1 — YAML editing (on main, awaiting release)
 
-- [ ] **YAML editing — phase 1.** "Copy as YAML" per rule (read-only
-  modal); "Import YAML" on panel header; accepts single rule or `rules:`
-  list. See [`docs/yaml-editing.md`](yaml-editing.md) for the full
-  design.
+- [x] **YAML editing — all three phases.** Per-rule "Show code editor"
+  toggle in the rule editor; whole-config "Show code editor" toggle
+  on the panel; atomic save via `smart_icons/replace_all`; clickable
+  per-rule + per-line error highlighting; discard-changes confirm.
+  All three phases of [`docs/yaml-editing.md`](yaml-editing.md)
+  landed in a single commit because the per-rule toggle and the
+  whole-config toggle share most of their wiring.
 
-### v0.3 — template mode + in-editor YAML
+### v0.3 — template mode + Door 1
 
 - [ ] **Template mode evaluation** — Jinja rendered server-side via HA's
   template machinery; `smart_icons/render_template` WS command for the
   panel's live preview, rate-limited per connection.
 - [ ] **Door 1** — entity settings dialog injection with a kill-switch,
   so individual entity pages get a "Smart Icon" section.
-- [ ] **YAML editing — phases 2 & 3.** "Edit in YAML" toggle in the
-  rule editor (HA automation-editor pattern); "Export all rules";
-  Append / Replace toggle on bulk import. See
-  [`docs/yaml-editing.md`](yaml-editing.md).
 - [ ] Translations — en plus framework for community PRs.
 
 ### v0.4+ — polish

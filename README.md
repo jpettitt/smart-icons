@@ -9,13 +9,16 @@ applied across the default Lovelace cards without per-card configuration.
 [![License](https://img.shields.io/github/license/jpettitt/smart-icons?style=for-the-badge)](LICENSE)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
 
-> **Status:** v0.2.0b2 — beta. Feature-complete for the v0.2 line:
-> server-side icon + color injection, sidebar management panel, multi-target
-> and glob rules, per-target source semantics, mapping-state autocomplete from
-> recorder history. Admin-only management (the painter still works for every
-> user). 86 pytest + 36 Web Test Runner tests green. Template-mode evaluation
-> lands in v0.3. See [DESIGN.md](DESIGN.md), [CHANGELOG.md](CHANGELOG.md),
-> [TODO.md](TODO.md).
+> **Status:** v0.2.0 — GA. Feature-complete for the v0.2 line: server-side
+> icon + color injection, sidebar management panel, multi-target and glob
+> rules, per-target source semantics, mapping-state autocomplete from
+> recorder history, admin-only management (the painter still works for
+> every user). Template-mode evaluation lands in v0.3.
+>
+> **On main, awaiting v0.2.1:** in-panel YAML editing (per-rule and
+> whole-config) with atomic save and clickable error highlighting. See
+> [`docs/yaml-editing.md`](docs/yaml-editing.md) for the design and the
+> [Unreleased CHANGELOG entry](CHANGELOG.md) for what landed.
 
 ## What problem does it solve?
 

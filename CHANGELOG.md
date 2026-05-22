@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+
+Targeting **v0.2.1**.
+
+### What's new
+
+- **In-editor YAML view.** Each rule now has a *Show code editor* /
+  *Show visual editor* text toggle next to Cancel + Save — the same
+  pattern HA's automation editor uses. Switching modes round-trips:
+  the form serializes to YAML, then YAML edits hydrate the form
+  back on the way out. The rule's id is preserved so saves update
+  in place rather than creating duplicates.
+- **Whole-config YAML view.** The panel itself gets a *Show code
+  editor* toggle at the bottom. Entering code mode dumps every rule
+  as a `rules:` list ready to copy into a gist; Save replaces the
+  whole config atomically.
+- **Atomic save** via a new `smart_icons/replace_all` WS command.
+  The server validates every rule before touching storage. Either
+  the entire new set lands or nothing changes — no partial-update
+  states on failure.
+- **Clickable error highlighting.** Every save failure — YAML
+  syntax errors with line/col, shape errors that name a rule, and
+  server-side per-rule validation — renders as a clickable item.
+  Clicking it focuses the textarea and selects the offending rule
+  (or jumps to the offending line). The first error is auto-selected
+  on display.
+- **Discard-changes confirm.** Toggling from code back to visual
+  with unsaved edits opens a confirmation modal so a misclick
+  doesn't silently drop the YAML.
+
+### Internals
+
+- New `BulkReplaceError` exception + `RuleStore.async_replace_all`
+  method. Admin-gated `smart_icons/replace_all` WS handler emits a
+  custom error frame carrying `rule_errors: [{ index, message }]`
+  for per-rule feedback.
+- Frontend panel bundle gains `js-yaml` (panel-bundle size 60 KB →
+  ~115 KB; painter bundle untouched at 3.3 KB).
+- 96 pytest + 67 Web Test Runner tests green; typecheck clean.
+
+### Design docs
+
+See [`docs/yaml-editing.md`](docs/yaml-editing.md) for the full
+design (motivation, UI patterns, library choice, validation layers,
+failure-mode UX, testing strategy).
+
+### Compatibility
+
+Drop-in upgrade from v0.2.0. No schema change, no migration. After
+update, restart HA.
+
 ## v0.2.0 — 2026-05-21
 
 First general-availability release of the v0.2 line. Rolls up everything
