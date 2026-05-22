@@ -145,6 +145,39 @@ describe('Painter', () => {
     expect(icon.style.color).to.equal('blue');
   });
 
+  it('walks up to a state-badge wrapper to find entity_id when the ha-state-icon has none', () => {
+    // Reproduces what HA's entities-card / more-info rows look like:
+    // a <state-badge> with stateObj on the host, wrapping an
+    // <ha-state-icon> inside its shadow root that only has data-*
+    // attributes (no stateObj property of its own — passed down via
+    // Lit binding that hasn't fired yet, or never fires in this
+    // surface). Painter should walk up and find the entity_id on
+    // the state-badge ancestor.
+    const badge = document.createElement('state-badge-fake');
+    (badge as unknown as { stateObj: unknown }).stateObj = {
+      entity_id: 'sensor.outdoor_temperature',
+      state: '74.3',
+      attributes: { smart_icons_color: 'orange' },
+    };
+    const shadow = badge.attachShadow({ mode: 'open' });
+    const icon = document.createElement('ha-state-icon');
+    // Deliberately no stateObj on the ha-state-icon — this is the
+    // failure mode the user reported.
+    icon.dataset.domain = 'sensor';
+    icon.dataset.state = '74.3';
+    const innerShadow = icon.attachShadow({ mode: 'open' });
+    innerShadow.appendChild(document.createElement('ha-icon'));
+    shadow.appendChild(icon);
+    document.body.appendChild(badge);
+    host = badge;
+
+    painter = new Painter();
+    painter.start();
+
+    expect(icon.style.color).to.equal('orange');
+    expect(icon.dataset.smartIconsOwned).to.equal('color');
+  });
+
   it('reads color from the watcher cache, not the host stateObj', () => {
     // Simulate the real-world race: card's stateObj is still the OLD
     // snapshot (Lit hasn't re-rendered yet), but the watcher cache —

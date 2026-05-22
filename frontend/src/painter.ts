@@ -150,16 +150,22 @@ export class Painter {
   }
 
   private paintHost(host: IconHostWithStateObj): void {
-    const entityId = host.stateObj?.entity_id;
+    // Resolve the entity stateObj — most ha-state-icons carry it on
+    // their own `stateObj` property, but some surfaces (state-badge
+    // wrappers, certain card rows) only put it on the parent and
+    // the inner ha-state-icon has nothing. resolveStateObj walks up
+    // until it finds one.
+    const stateObj = this.resolveStateObj(host);
+    const entityId = stateObj?.entity_id;
     if (!entityId) return;
 
     // Prefer the StateWatcher cache when wired up (production). It
     // tracks the connection-layer truth synchronously, so we don't
-    // race Lit's stateObj rebind. Fall back to host.stateObj for
-    // tests that construct a bare Painter() without a watcher.
+    // race Lit's stateObj rebind. Fall back to the resolved stateObj
+    // for tests that construct a bare Painter() without a watcher.
     const color = (this.watcher
       ? this.watcher.getAttribute(entityId, SMART_ICONS_COLOR_ATTR)
-      : host.stateObj?.attributes?.[SMART_ICONS_COLOR_ATTR]) as
+      : stateObj?.attributes?.[SMART_ICONS_COLOR_ATTR]) as
       | string
       | null
       | undefined;
@@ -176,6 +182,49 @@ export class Painter {
     if (!host.dataset[DATA_OWNED]) return;
     host.style.color = '';
     delete host.dataset[DATA_OWNED];
+  }
+
+  /** Find the entity stateObj this `<ha-state-icon>` represents.
+   *
+   *  Fast path: `host.stateObj` — HA passes a `stateObj` property
+   *  to ha-state-icon in most surfaces (tiles, more-info, dev
+   *  tools, etc). In some contexts (notably `<state-badge>`
+   *  wrappers used by entities-card rows and more-info headers)
+   *  the immediate ha-state-icon has no `stateObj` of its own —
+   *  the data lives on the wrapping element and HA either only
+   *  passes data-* attributes down, or hasn't finished propagating
+   *  the property when we paint.
+   *
+   *  Slow path: walk up through the DOM, hopping across shadow-root
+   *  boundaries, and use the first ancestor that carries a
+   *  `stateObj.entity_id`. The first state-badge / row going up is
+   *  always the entity wrapper for the icon, so the walk terminates
+   *  quickly. A 12-hop guard prevents a pathological DOM from
+   *  burning cycles. */
+  private resolveStateObj(
+    host: IconHostWithStateObj,
+  ): IconHostWithStateObj['stateObj'] | undefined {
+    if (host.stateObj?.entity_id) return host.stateObj;
+
+    let node: Node | null =
+      host.parentNode ??
+      ((host.getRootNode() as ShadowRoot).host ?? null);
+    let hops = 0;
+    while (node && hops < 12) {
+      const obj = (node as { stateObj?: IconHostWithStateObj['stateObj'] })
+        .stateObj;
+      if (obj?.entity_id) return obj;
+      const root = node.getRootNode?.();
+      if (node.parentNode) {
+        node = node.parentNode;
+      } else if (root && (root as ShadowRoot).host) {
+        node = (root as ShadowRoot).host;
+      } else {
+        node = null;
+      }
+      hops += 1;
+    }
+    return undefined;
   }
 }
 
