@@ -35,8 +35,30 @@ _LOGGER = logging.getLogger(__name__)
 
 URL_BASE = "/smart_icons_static"
 BUNDLE_FILENAME = "smart_icons.js"
-URL_JS = f"{URL_BASE}/{BUNDLE_FILENAME}"
-URL_PANEL_JS = f"{URL_BASE}/{PANEL_BUNDLE_FILENAME}"
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+
+def _bundle_cache_buster(filename: str) -> str:
+    """Build-time cache-buster query value for a bundle.
+
+    Returns the bundle file's mtime (seconds since epoch) as a string, or
+    ``"0"`` if the file is missing. Mtime is used over manifest version so
+    the cache also busts during local development when the version isn't
+    bumped between rebuilds. On a HACS install the zip's stored mtimes are
+    preserved on extraction, so each shipped release produces a unique
+    value per bundle without any extra bookkeeping.
+    """
+    bundle_path = os.path.join(STATIC_DIR, filename)
+    try:
+        return str(int(os.path.getmtime(bundle_path)))
+    except OSError:
+        return "0"
+
+
+URL_JS = f"{URL_BASE}/{BUNDLE_FILENAME}?v={_bundle_cache_buster(BUNDLE_FILENAME)}"
+URL_PANEL_JS = (
+    f"{URL_BASE}/{PANEL_BUNDLE_FILENAME}?v={_bundle_cache_buster(PANEL_BUNDLE_FILENAME)}"
+)
 
 
 async def async_register_frontend(hass: HomeAssistant) -> bool:
@@ -46,8 +68,7 @@ async def async_register_frontend(hass: HomeAssistant) -> bool:
     Idempotent: the underlying HA helpers tolerate the same URL being
     added twice on hot-reload.
     """
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
-    bundle_path = os.path.join(static_dir, BUNDLE_FILENAME)
+    bundle_path = os.path.join(STATIC_DIR, BUNDLE_FILENAME)
 
     if not os.path.isfile(bundle_path):
         _LOGGER.warning(
@@ -60,7 +81,7 @@ async def async_register_frontend(hass: HomeAssistant) -> bool:
         return False
 
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(URL_BASE, static_dir, cache_headers=False)]
+        [StaticPathConfig(URL_BASE, STATIC_DIR, cache_headers=False)]
     )
     add_extra_js_url(hass, URL_JS)
     _LOGGER.debug("Smart Icons painter bundle registered at %s", URL_JS)
@@ -68,7 +89,7 @@ async def async_register_frontend(hass: HomeAssistant) -> bool:
     # Register the sidebar panel only if its bundle exists. Missing-panel
     # is a softer failure mode than missing-painter — users can still
     # drive the integration via the WS API.
-    panel_bundle_path = os.path.join(static_dir, PANEL_BUNDLE_FILENAME)
+    panel_bundle_path = os.path.join(STATIC_DIR, PANEL_BUNDLE_FILENAME)
     if os.path.isfile(panel_bundle_path):
         async_register_built_in_panel(
             hass,
