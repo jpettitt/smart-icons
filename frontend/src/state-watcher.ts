@@ -1,7 +1,7 @@
 /**
  * Caches entity states for the painter and fans out `state_changed` events.
  *
- * v0.1 subscribes to *all* `state_changed` events and filters client-side.
+ * Subscribes to *all* `state_changed` events and filters client-side.
  * On most HA installs that's well under a few hundred events per minute,
  * and the handler is O(1) per event. A per-entity subscription model is a
  * later optimization (DESIGN.md § 7.4) — the high-traffic case is unusual.
@@ -13,9 +13,18 @@
  * scheduled in parallel with our paint, and there's no ordering
  * guarantee. Reading from our own synchronous cache removes that race
  * (DESIGN.md § 7.5).
+ *
+ * Bootstrap (start()) uses HA's `get_states` WS command to fetch the
+ * authoritative initial-state snapshot instead of trusting
+ * `<home-assistant>.hass.states` to be populated. The latter is filled
+ * asynchronously by HA's connection layer and was empty for some
+ * slow-bootstrapping setups, leaving the watcher cache permanently
+ * missing slow-moving entities (temperatures, locks). Events that
+ * arrive during the get_states fetch are buffered then drained on
+ * top of the snapshot — no race, no lost events.
  */
 
-import type { HassConnection, HassStates } from './types';
+import type { HassConnection } from './types';
 
 type Listener = (entityId: string, newState: string | undefined) => void;
 
@@ -32,6 +41,16 @@ interface StateChangedEvent {
   };
 }
 
+/** Shape of an entry in HA's `get_states` response. Same fields the
+ *  WebSocket connection delivers from the server's canonical state
+ *  store, used here to bootstrap our cache without depending on
+ *  `<home-assistant>.hass.states` being populated yet. */
+interface GetStatesEntry {
+  entity_id: string;
+  state: string;
+  attributes: Record<string, unknown>;
+}
+
 export class StateWatcher {
   private states = new Map<string, StateSnapshot>();
   private listeners = new Set<Listener>();
@@ -39,14 +58,55 @@ export class StateWatcher {
 
   constructor(private readonly conn: HassConnection) {}
 
-  async start(initialStates: HassStates): Promise<void> {
-    for (const [id, s] of Object.entries(initialStates)) {
-      this.states.set(id, { state: s.state, attributes: s.attributes ?? {} });
-    }
+  async start(): Promise<void> {
+    // Canonical "bootstrap a cache from a stream" pattern. We don't
+    // trust `<home-assistant>.hass.states` here — that map is
+    // populated asynchronously by HA's connection layer and may be
+    // empty when our bundle's bootstrap reaches this point (the
+    // pre-v0.2.2b2 race that caused slow-moving entities like
+    // temperatures and locks to never enter our cache).
+    //
+    // Instead:
+    //   1. Subscribe FIRST, with events queued into a local buffer
+    //      while we fetch initial state. The buffer guarantees no
+    //      event is lost during the await for get_states.
+    //   2. Fetch `get_states` — HA's authoritative current snapshot,
+    //      same WS command HA's own connection extension uses.
+    //   3. Populate the cache from the snapshot.
+    //   4. Drain the buffer in FIFO order on top of the snapshot.
+    //      Server-side ordering guarantees events in the buffer that
+    //      pre-date the snapshot are no-ops (snapshot already
+    //      includes them); events that post-date the snapshot bring
+    //      the cache forward to the latest known state.
+    //   5. Switch the handler to direct mode for the rest of the
+    //      session.
+    let bufferMode = true;
+    const buffer: StateChangedEvent[] = [];
+
     this.unsubscribe = await this.conn.subscribeEvents<StateChangedEvent>(
-      (event) => this.handleStateChanged(event),
-      'state_changed'
+      (event) => {
+        if (bufferMode) buffer.push(event);
+        else this.handleStateChanged(event);
+      },
+      'state_changed',
     );
+
+    const states = await this.conn.sendMessagePromise<GetStatesEntry[]>({
+      type: 'get_states',
+    });
+    for (const s of states) {
+      this.states.set(s.entity_id, {
+        state: s.state,
+        attributes: s.attributes ?? {},
+      });
+    }
+
+    // JS is single-threaded — no events can fire between the snapshot
+    // application above, this drain loop, and the mode flip below, so
+    // we don't need a re-drain or lock.
+    for (const event of buffer) this.handleStateChanged(event);
+    buffer.length = 0;
+    bufferMode = false;
   }
 
   async stop(): Promise<void> {
@@ -56,10 +116,6 @@ export class StateWatcher {
     }
     this.states.clear();
     this.listeners.clear();
-  }
-
-  getState(entityId: string): string | undefined {
-    return this.states.get(entityId)?.state;
   }
 
   /** Read a state attribute from our own synchronously-updated cache.

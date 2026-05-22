@@ -64,7 +64,15 @@ async function bootstrap(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log('[smart-icons] painter started');
 
-  await watcher.start(hass.states);
+  await watcher.start();
+  // watcher.start() is the moment our cache is reliably populated
+  // (it fetches `get_states` authoritatively rather than trusting
+  // `hass.states` to be ready). painter.start() ran earlier
+  // (synchronously) and may have called paintHost on hosts while
+  // the cache was still empty — those sit in knownHosts with no
+  // color applied. One repaint pass now catches them all in one
+  // batch from the freshly-filled cache.
+  painter.repaintAll();
   // eslint-disable-next-line no-console
   console.log('[smart-icons] ready');
 }
