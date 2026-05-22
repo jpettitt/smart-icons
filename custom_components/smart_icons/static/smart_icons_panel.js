@@ -67,6 +67,16 @@ var zr=Object.defineProperty;var Gr=Object.getOwnPropertyDescriptor;var y=(e,r,t
     padding-top: 12px;
     border-top: 1px solid var(--divider-color, #e0e0e0);
   }
+  /* Action row at the bottom of an ha-dialog body — the workaround
+     for modern ha-dialog dropping its primaryAction / secondaryAction
+     named slots. Right-aligns Cancel + Confirm to match HA's own
+     visual convention for confirmation modals. */
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
   /* "Show code editor" / "Show visual editor" toggle. Plain text in
      the primary color — matches HA's automation-editor pattern. */
   .text-toggle {
@@ -1268,15 +1278,17 @@ var zr=Object.defineProperty;var Gr=Object.getOwnPropertyDescriptor;var y=(e,r,t
           The color override (and on the next state update, the icon
           override) will be cleared.
         </p>
-        <ha-button slot="secondaryAction" @click=${this.cancelDelete}
-          >Cancel</ha-button
-        >
-        <ha-button
-          slot="primaryAction"
-          variant="danger"
-          @click=${this.confirmDelete}
-          >Delete</ha-button
-        >
+        <!-- Buttons live in the dialog body (unnamed slot), not in
+             slot="primaryAction" / "secondaryAction" — modern ha-dialog
+             dropped those named slots so slotted children are silently
+             hidden by the browser. The rule editor uses the same
+             content-area pattern (rule-editor.ts .actions div). -->
+        <div class="dialog-actions">
+          <ha-button @click=${this.cancelDelete}>Cancel</ha-button>
+          <ha-button variant="danger" @click=${this.confirmDelete}
+            >Delete</ha-button
+          >
+        </div>
       </ha-dialog>
     `}renderEmpty(){return g`
       <div class="empty">
@@ -1359,15 +1371,15 @@ var zr=Object.defineProperty;var Gr=Object.getOwnPropertyDescriptor;var y=(e,r,t
           You have unsaved changes in the code editor. Switching back
           to the visual editor will discard them.
         </p>
-        <ha-button slot="secondaryAction" @click=${this.cancelDiscard}
-          >Cancel</ha-button
-        >
-        <ha-button
-          slot="primaryAction"
-          variant="danger"
-          @click=${this.confirmDiscard}
-          >Discard</ha-button
-        >
+        <!-- See note on the delete-confirm modal above: ha-dialog's
+             primaryAction / secondaryAction named slots don't exist in
+             modern HA, so buttons go in the content area. -->
+        <div class="dialog-actions">
+          <ha-button @click=${this.cancelDiscard}>Cancel</ha-button>
+          <ha-button variant="danger" @click=${this.confirmDiscard}
+            >Discard</ha-button
+          >
+        </div>
       </ha-dialog>
     `}autoJumpToFirstError(){let t=this.codeError;if(!t)return;if(t.ruleErrors&&t.ruleErrors.length>0){this.jumpToRule(t.ruleErrors[0].index);return}let i=this.jumpHandlerFor(t);i&&i()}errorMessage(t){if(t&&typeof t=="object"&&"message"in t){let i=t.message;if(typeof i=="string")return i}return String(t)}};$.styles=Ft,y([D({attribute:!1})],$.prototype,"hass",2),y([D({type:Boolean,reflect:!0})],$.prototype,"narrow",2),y([_()],$.prototype,"rules",2),y([_()],$.prototype,"editing",2),y([_()],$.prototype,"dialogOpen",2),y([_()],$.prototype,"editorError",2),y([_()],$.prototype,"pendingDelete",2),y([_()],$.prototype,"actionError",2),y([_()],$.prototype,"codeMode",2),y([_()],$.prototype,"codeText",2),y([_()],$.prototype,"codeInitialText",2),y([_()],$.prototype,"codeError",2),y([_()],$.prototype,"codeSubmitting",2),y([_()],$.prototype,"pendingDiscard",2),$=y([ke("smart-icons-panel")],$);
 /*! Bundled license information:

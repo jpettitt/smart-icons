@@ -328,15 +328,17 @@ export class SmartIconsPanel extends LitElement {
           The color override (and on the next state update, the icon
           override) will be cleared.
         </p>
-        <ha-button slot="secondaryAction" @click=${this.cancelDelete}
-          >Cancel</ha-button
-        >
-        <ha-button
-          slot="primaryAction"
-          variant="danger"
-          @click=${this.confirmDelete}
-          >Delete</ha-button
-        >
+        <!-- Buttons live in the dialog body (unnamed slot), not in
+             slot="primaryAction" / "secondaryAction" — modern ha-dialog
+             dropped those named slots so slotted children are silently
+             hidden by the browser. The rule editor uses the same
+             content-area pattern (rule-editor.ts .actions div). -->
+        <div class="dialog-actions">
+          <ha-button @click=${this.cancelDelete}>Cancel</ha-button>
+          <ha-button variant="danger" @click=${this.confirmDelete}
+            >Delete</ha-button
+          >
+        </div>
       </ha-dialog>
     `;
   }
@@ -605,15 +607,15 @@ export class SmartIconsPanel extends LitElement {
           You have unsaved changes in the code editor. Switching back
           to the visual editor will discard them.
         </p>
-        <ha-button slot="secondaryAction" @click=${this.cancelDiscard}
-          >Cancel</ha-button
-        >
-        <ha-button
-          slot="primaryAction"
-          variant="danger"
-          @click=${this.confirmDiscard}
-          >Discard</ha-button
-        >
+        <!-- See note on the delete-confirm modal above: ha-dialog's
+             primaryAction / secondaryAction named slots don't exist in
+             modern HA, so buttons go in the content area. -->
+        <div class="dialog-actions">
+          <ha-button @click=${this.cancelDiscard}>Cancel</ha-button>
+          <ha-button variant="danger" @click=${this.confirmDiscard}
+            >Discard</ha-button
+          >
+        </div>
       </ha-dialog>
     `;
   }

@@ -77,6 +77,16 @@ export const panelStyles = css`
     padding-top: 12px;
     border-top: 1px solid var(--divider-color, #e0e0e0);
   }
+  /* Action row at the bottom of an ha-dialog body — the workaround
+     for modern ha-dialog dropping its primaryAction / secondaryAction
+     named slots. Right-aligns Cancel + Confirm to match HA's own
+     visual convention for confirmation modals. */
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
   /* "Show code editor" / "Show visual editor" toggle. Plain text in
      the primary color — matches HA's automation-editor pattern. */
   .text-toggle {
