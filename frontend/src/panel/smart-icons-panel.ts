@@ -127,6 +127,9 @@ export class SmartIconsPanel extends LitElement {
           ? html`
               <div class="action-error" role="alert">
                 <span>${this.actionError}</span>
+                <!-- "×" dismiss affordance — bare button per
+                     docs/ha-elements-guide.md decision tree, item 4
+                     (icon-button-style, not a primary action). -->
                 <button
                   class="action-error-dismiss"
                   @click=${this.clearActionError}
@@ -179,6 +182,9 @@ export class SmartIconsPanel extends LitElement {
     return html`
       ${this.rules.length === 0 ? this.renderEmpty() : this.renderTable()}
       <div class="panel-actions">
+        <!-- Text-link affordance — bare button per
+             docs/ha-elements-guide.md decision tree, item 4. Same
+             pattern HA's automation editor uses for its YAML toggle. -->
         <button
           type="button"
           class="text-toggle"
@@ -197,6 +203,9 @@ export class SmartIconsPanel extends LitElement {
    *  so existing rules are never partially updated on failure. */
   private renderCodeView() {
     return html`
+      <!-- Whole-config YAML editor — bare textarea per
+           docs/ha-elements-guide.md decision tree, item 4: ha-code-editor
+           exists but requires Ace/Monaco wiring that's overkill here. -->
       <textarea
         class="yaml-area panel-yaml"
         spellcheck="false"
@@ -212,6 +221,7 @@ export class SmartIconsPanel extends LitElement {
       ></textarea>
       ${this.codeError ? this.renderCodeError(this.codeError) : nothing}
       <div class="panel-actions">
+        <!-- Bare text-toggle button — see renderVisualView. -->
         <button
           type="button"
           class="text-toggle"
