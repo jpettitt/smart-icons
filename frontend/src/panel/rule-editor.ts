@@ -1,19 +1,21 @@
 /**
  * `<smart-icons-rule-editor>` — form for creating or editing one rule.
  *
- * Uses plain HTML `<input>` / `<select>` styled with HA's CSS variables.
- * We tried HA's `ha-textfield` originally but it isn't reliably defined
- * by the time a custom-panel module loads (other ha-* elements like
- * ha-select and ha-switch are, but ha-textfield's lazy-load chunk isn't
- * guaranteed). Plain inputs always render, theme correctly via CSS
- * variables, and dodge the entire timing question.
+ * Uses HA-native `ha-input` / `ha-selector` / `ha-button` /
+ * `ha-icon-picker` per `docs/ha-elements-guide.md`. A few elements
+ * are intentionally bare HTML where the guide endorses it (decision
+ * tree, item 4): the `<input type="color">` swatch picker (no
+ * first-class HA color element), the per-rule `<textarea>` YAML
+ * editor (`ha-code-editor` is overkill), and the bare `<button>`
+ * row-delete affordances (icon-button-style, not primary actions).
+ * Each carries a code comment naming the guide.
  *
  * Emits `save` with the rule payload or `cancel`. The host panel is
  * responsible for actually persisting the rule via the WS API and for
  * showing/hiding this element inside an `ha-dialog`.
  */
 
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { LitElement, html, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { Hass, Rule, RuleMode, ThresholdEntry, Decoration } from '../types';
@@ -43,6 +45,21 @@ function nextKey(): number {
   return _nextKey++;
 }
 
+/** Option labels for the threshold-comparator dropdown. The empty
+ *  string maps to "no comparator" — the trailing entry that's the
+ *  "else" branch when no other rule matches. Kept as a module-level
+ *  constant so the array identity is stable across renders (ha-selector
+ *  re-runs its options-changed lifecycle when the array reference
+ *  changes). */
+const COMPARATOR_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '', label: '(else)' },
+  { value: 'lt', label: '<' },
+  { value: 'lte', label: '≤' },
+  { value: 'gt', label: '>' },
+  { value: 'gte', label: '≥' },
+  { value: 'eq', label: '=' },
+];
+
 @customElement('smart-icons-rule-editor')
 export class SmartIconsRuleEditor extends LitElement {
   static override styles = editorStyles;
@@ -71,18 +88,34 @@ export class SmartIconsRuleEditor extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    // HA's pickers are lazy-loaded; re-render when they land so plain
-    // inputs upgrade. We use `ha-selector` for entities (HA's
-    // higher-level dispatcher — same code path as options flows, handles
-    // all version-specific picker variants internally) and
-    // `ha-icon-picker` for icons.
-    for (const tag of ['ha-icon-picker', 'ha-selector']) {
+    // HA's element chunks are lazy-loaded; re-render when each lands so
+    // the form upgrades from any zero-height placeholders. The ha-*
+    // elements we expect to use:
+    //   - ha-selector: target entities, source entity, mode dropdown,
+    //     threshold comparator
+    //   - ha-icon-picker: decoration glyph picker
+    //   - ha-input: every text/number field; also the fallback when
+    //     ha-selector / ha-icon-picker haven't loaded yet
+    //   - ha-button: primary actions (Add entry / Add state / Add
+    //     pattern, Cancel, Save)
+    //   - ha-switch: the Enabled/Disabled toggle
+    // See docs/ha-elements-guide.md for which elements load reliably
+    // and which need this defensive `whenDefined` upgrade.
+    for (const tag of [
+      'ha-icon-picker',
+      'ha-selector',
+      'ha-input',
+      'ha-button',
+      'ha-switch',
+      'ha-sortable',
+      'ha-icon',
+    ]) {
       if (!customElements.get(tag)) {
         void customElements
           .whenDefined(tag)
           .then(() => this.requestUpdate())
           .catch(() => {
-            /* never loaded — stay on plain input fallback */
+            /* never loaded — leave the unupgraded element in place */
           });
       }
     }
@@ -192,18 +225,20 @@ export class SmartIconsRuleEditor extends LitElement {
         ></ha-icon-picker>
       `;
     }
+    // ha-icon-picker not yet defined — fall back to ha-input. Re-renders
+    // once whenDefined resolves in connectedCallback. ha-input is itself
+    // reliably loaded in the panel context (see docs/ha-elements-guide.md).
     return html`
       <div class="icon-input">
         ${value
           ? html`<ha-icon class="icon-preview" .icon=${value}></ha-icon>`
           : html`<span class="icon-preview placeholder" aria-hidden="true"></span>`}
-        <input
-          type="text"
-          placeholder="mdi:icon"
+        <ha-input
+          label="Icon"
           .value=${value}
           @input=${(e: Event) =>
             onChange((e.target as HTMLInputElement).value)}
-        />
+        ></ha-input>
       </div>
     `;
   }
@@ -245,19 +280,22 @@ export class SmartIconsRuleEditor extends LitElement {
         </div>
       `;
     }
+    // ha-selector not yet defined — fall back to ha-input. The
+    // `<datalist>` autocomplete that the bare input had is dropped:
+    // ha-input doesn't support datalist out of the box, and the
+    // ha-selector path that this fallback covers has its own
+    // autocomplete dropdown. Re-renders once whenDefined resolves.
     return html`
-      <label class="field">
-        <span class="label">${label}</span>
-        <input
-          type="text"
-          list="smart-icons-entities"
+      <div class="field">
+        <ha-input
+          label=${label}
           ?required=${required}
           placeholder=${placeholder}
           .value=${value}
           @input=${(e: Event) =>
             onChange((e.target as HTMLInputElement).value)}
-        />
-      </label>
+        ></ha-input>
+      </div>
     `;
   }
 
@@ -305,6 +343,35 @@ export class SmartIconsRuleEditor extends LitElement {
     `;
   }
 
+  /** Mode dropdown using ha-selector's select config. For legacy rules
+   *  already in template mode, the dropdown includes a deprecated
+   *  "Template" entry so the current value stays visible (and editable
+   *  to switch out of it); new rules can only pick mapping or
+   *  thresholds. The selector requires `.label` to render its
+   *  floating-label layout (see docs/ha-elements-guide.md). */
+  private renderModeSelector() {
+    const options: { value: string; label: string }[] = [
+      { value: 'mapping', label: 'Mapping (exact state → decoration)' },
+      { value: 'thresholds', label: 'Thresholds (numeric ranges)' },
+    ];
+    if (this.working.mode === 'template') {
+      options.push({
+        value: 'template',
+        label: 'Template (deprecated — edit existing rules only)',
+      });
+    }
+    return html`
+      <ha-selector
+        .hass=${this.hass}
+        .selector=${{ select: { options, mode: 'dropdown' } }}
+        .value=${this.working.mode}
+        .label=${'Mode'}
+        @value-changed=${(e: CustomEvent<{ value: string }>) =>
+          this.patch({ mode: (e.detail?.value ?? 'mapping') as RuleMode })}
+      ></ha-selector>
+    `;
+  }
+
   /** The YAML textarea + parse error display, shown when codeMode is on.
    *  Same visual treatment as the panel's Import dialog. */
   private renderCodeView() {
@@ -324,6 +391,8 @@ export class SmartIconsRuleEditor extends LitElement {
       ${this.codeError
         ? html`<div class="inline-error" role="alert">${this.codeError}</div>`
         : null}
+      <!-- Per-rule YAML editor — bare textarea per
+           docs/ha-elements-guide.md decision tree, item 4. -->
       <textarea
         class="yaml-area"
         .value=${this.codeText}
@@ -374,56 +443,27 @@ export class SmartIconsRuleEditor extends LitElement {
           this.working.source,
           (v) => this.patch({ source: v })
         )}
-        <label class="field">
-          <span class="label">Source attribute</span>
-          <input
-            type="text"
-            list="smart-icons-source-attributes"
+        <div class="field">
+          <ha-input
+            label="Source attribute"
             placeholder="leave blank to use the entity's state"
             .value=${this.working.source_attribute}
             @input=${(e: Event) =>
               this.patch({
                 source_attribute: (e.target as HTMLInputElement).value,
               })}
-          />
+          ></ha-input>
           <span class="hint">
             ${this.renderWatchingHint()}
           </span>
-        </label>
+        </div>
       </section>
 
       <section class="group">
         <h3 class="group-title">Decoration</h3>
-        <label class="field">
-          <span class="label">Mode</span>
-          <select
-            .value=${this.working.mode}
-            @change=${(e: Event) =>
-              this.patch({
-                mode: (e.target as HTMLSelectElement).value as RuleMode,
-              })}
-          >
-            <option
-              value="mapping"
-              ?selected=${this.working.mode === 'mapping'}
-            >
-              Mapping (exact state → decoration)
-            </option>
-            <option
-              value="thresholds"
-              ?selected=${this.working.mode === 'thresholds'}
-            >
-              Thresholds (numeric ranges)
-            </option>
-            ${this.working.mode === 'template'
-              ? html`
-                  <option value="template" selected>
-                    Template (deprecated — edit existing rules only)
-                  </option>
-                `
-              : nothing}
-          </select>
-        </label>
+        <div class="field">
+          ${this.renderModeSelector()}
+        </div>
         ${this.working.mode === 'thresholds'
           ? this.renderThresholds()
           : this.working.mode === 'mapping'
@@ -436,21 +476,21 @@ export class SmartIconsRuleEditor extends LitElement {
 
       <section class="group">
         <h3 class="group-title">Options</h3>
-        <label class="field">
-          <span class="label">Priority</span>
-          <input
+        <div class="field">
+          <ha-input
+            label="Priority"
             type="number"
             .value=${String(this.working.priority)}
             @input=${(e: Event) =>
               this.patch({
                 priority: Number((e.target as HTMLInputElement).value) || 0,
               })}
-          />
+          ></ha-input>
           <span class="hint">
             When several rules target the same entity, the highest-priority
             enabled rule with a matching state wins.
           </span>
-        </label>
+        </div>
       </section>
 
     `;
@@ -633,7 +673,7 @@ export class SmartIconsRuleEditor extends LitElement {
       <fieldset>
         <legend>
           Threshold entries — first matching wins; the entry with no
-          comparator is the "else" branch. Use ↑ ↓ to reorder.
+          comparator is the "else" branch. Drag the handle to reorder.
         </legend>
         ${entries.length === 0
           ? html`<p class="fieldset-hint">
@@ -642,78 +682,108 @@ export class SmartIconsRuleEditor extends LitElement {
               The first matching entry wins.
             </p>`
           : null}
+        <!-- ha-sortable is HA's canonical drag-reorder wrapper. It
+             attaches SortableJS to its FIRST DIRECT CHILD (the
+             container div below, not to ha-sortable itself), then
+             uses handle-selector + draggable-selector to identify
+             which descendants initiate drags and which participate
+             as items. The explicit .rollback=false matches HA's
+             own editors and avoids SortableJS leaving a stale
+             comment placeholder behind when Lit re-renders the
+             list on a state change. -->
+        <!-- prettier-ignore -->
+        <!-- (Lit/TS template-literal parser interprets dollar-brace
+             inside HTML comments — so any rollback / interpolation
+             example is paraphrased above rather than written
+             literally.) -->
+        <ha-sortable
+          handle-selector=".handle"
+          draggable-selector=".threshold-row"
+          .rollback=${false}
+          @item-moved=${this.onThresholdMoved}
+        >
+          <div class="threshold-rows">
         ${entries.map(
           (t, idx) => html`
-            <div class="row threshold-row">
-              <div class="reorder-buttons">
-                <button
-                  class="btn-icon"
-                  ?disabled=${idx === 0}
-                  @click=${() => this.moveThreshold(idx, -1)}
-                  title="Move up"
-                >↑</button>
-                <button
-                  class="btn-icon"
-                  ?disabled=${idx === entries.length - 1}
-                  @click=${() => this.moveThreshold(idx, 1)}
-                  title="Move down"
-                >↓</button>
+            <div class="threshold-row">
+              <!-- Drag handle — HA's canonical "six dots" mdi:drag
+                   glyph picked up by ha-sortable via the
+                   handle-selector. Sits in column 1, aligned to the
+                   top of the row content. -->
+              <div class="handle" title="Drag to reorder">
+                <ha-icon icon="mdi:drag"></ha-icon>
               </div>
-              <select
-                .value=${this.thresholdComparator(t)}
-                @change=${(e: Event) =>
-                  this.setThresholdComparator(
-                    idx,
-                    (e.target as HTMLSelectElement).value
-                  )}
-                title="Comparator"
-              >
-                <option value="">(else)</option>
-                <option value="lt">&lt;</option>
-                <option value="lte">≤</option>
-                <option value="gt">&gt;</option>
-                <option value="gte">≥</option>
-                <option value="eq">=</option>
-              </select>
-              <input
-                type="text"
-                placeholder="value"
-                .value=${this.thresholdValue(t)}
-                ?disabled=${this.thresholdComparator(t) === ''}
-                @input=${(e: Event) =>
-                  this.setThresholdValue(
-                    idx,
-                    (e.target as HTMLInputElement).value
-                  )}
-              />
-              ${this.renderColorInput(t.color ?? '', (v) =>
-                this.updateThreshold(idx, { color: v })
-              )}
-              ${this.renderIconField(t.icon ?? '', (v) =>
-                this.updateThreshold(idx, { icon: v })
-              )}
-              <button
-                class="btn-icon"
-                @click=${() => this.removeThreshold(idx)}
-                title="Remove"
-              >×</button>
+              <div class="threshold-row-fields">
+                <ha-selector
+                  .hass=${this.hass}
+                  .selector=${{
+                    select: {
+                      options: COMPARATOR_OPTIONS,
+                      mode: 'dropdown',
+                    },
+                  }}
+                  .value=${this.thresholdComparator(t)}
+                  .label=${'Comparator'}
+                  @value-changed=${(e: CustomEvent<{ value: string }>) =>
+                    this.setThresholdComparator(idx, e.detail?.value ?? '')}
+                ></ha-selector>
+                <ha-input
+                  label="Value"
+                  .value=${this.thresholdValue(t)}
+                  ?disabled=${this.thresholdComparator(t) === ''}
+                  @input=${(e: Event) =>
+                    this.setThresholdValue(
+                      idx,
+                      (e.target as HTMLInputElement).value
+                    )}
+                ></ha-input>
+                ${this.renderColorInput(t.color ?? '', (v) =>
+                  this.updateThreshold(idx, { color: v })
+                )}
+                ${this.renderIconField(t.icon ?? '', (v) =>
+                  this.updateThreshold(idx, { icon: v })
+                )}
+                <button
+                  class="btn-icon"
+                  @click=${() => this.removeThreshold(idx)}
+                  title="Remove"
+                >×</button>
+              </div>
             </div>
           `
         )}
-        <button class="btn-text add-button" @click=${this.addThreshold}>
-          + Add entry
-        </button>
+          </div>
+        </ha-sortable>
+        <ha-button
+          variant="neutral"
+          @click=${this.addThreshold}
+        >+ Add entry</ha-button>
       </fieldset>
     `;
   }
 
-  private moveThreshold(idx: number, delta: -1 | 1): void {
-    const target = idx + delta;
-    if (target < 0 || target >= this.working.thresholds.length) return;
+  /** Reorder a threshold entry on a successful drag drop. Event detail
+   *  shape `{ oldIndex, newIndex }` matches ha-sortable's contract and
+   *  HA's own _itemMoved handlers across the frontend codebase. */
+  private onThresholdMoved = (
+    e: CustomEvent<{ oldIndex: number; newIndex: number }>,
+  ): void => {
+    e.stopPropagation();
+    const { oldIndex, newIndex } = e.detail;
+    if (
+      oldIndex === newIndex ||
+      oldIndex < 0 ||
+      newIndex < 0 ||
+      oldIndex >= this.working.thresholds.length ||
+      newIndex >= this.working.thresholds.length
+    ) {
+      return;
+    }
     const next = [...this.working.thresholds];
-    [next[idx], next[target]] = [next[target], next[idx]];
+    const [moved] = next.splice(oldIndex, 1);
+    next.splice(newIndex, 0, moved);
     this.working = { ...this.working, thresholds: next };
-  }
+  };
 
   private renderMapping() {
     const entries = this.working.mapping;
@@ -740,22 +810,23 @@ export class SmartIconsRuleEditor extends LitElement {
         ${entries.map(
           (m, idx) => html`
             <div class="row">
-              <input
-                type="text"
-                placeholder="state"
-                list="smart-icons-observed-states"
+              <ha-input
+                label="State"
                 .value=${m.key}
                 @input=${(e: Event) =>
                   this.updateMapping(idx, {
                     key: (e.target as HTMLInputElement).value,
                   })}
-              />
+              ></ha-input>
               ${this.renderColorInput(m.color, (v) =>
                 this.updateMapping(idx, { color: v })
               )}
               ${this.renderIconField(m.icon, (v) =>
                 this.updateMapping(idx, { icon: v })
               )}
+              <!-- Row-delete affordance — bare button per
+                   docs/ha-elements-guide.md decision tree, item 4
+                   (icon-button-style affordance, not a primary action). -->
               <button
                 class="btn-icon"
                 @click=${() => this.removeMapping(idx)}
@@ -764,9 +835,10 @@ export class SmartIconsRuleEditor extends LitElement {
             </div>
           `
         )}
-        <button class="btn-text add-button" @click=${this.addMapping}>
-          + Add state
-        </button>
+        <ha-button
+          variant="neutral"
+          @click=${this.addMapping}
+        >+ Add state</ha-button>
       </fieldset>
     `;
   }
@@ -783,15 +855,15 @@ export class SmartIconsRuleEditor extends LitElement {
           Template mode (deprecated — storage-only). Runtime evaluation
           is demand-driven; see TODO.md.
         </legend>
-        <input
-          type="text"
+        <ha-input
+          label="Template"
           placeholder='{{ "#ff0000" if is_state(...) else "inherit" }}'
           .value=${this.working.template}
           @input=${(e: Event) =>
             this.patch({
               template: (e.target as HTMLInputElement).value,
             })}
-        />
+        ></ha-input>
       </fieldset>
     `;
   }
@@ -799,6 +871,10 @@ export class SmartIconsRuleEditor extends LitElement {
   private renderColorInput(value: string, onChange: (v: string) => void) {
     return html`
       <div class="swatch-input">
+        <!-- Native <input type="color"> per docs/ha-elements-guide.md
+             decision tree, item 4: HA has no first-class hex color
+             picker, and the native swatch is the most reliable
+             cross-version solution. -->
         <input
           type="color"
           .value=${this.colorAsHex(value)}
@@ -806,13 +882,13 @@ export class SmartIconsRuleEditor extends LitElement {
             onChange((e.target as HTMLInputElement).value)}
           title="Pick a color"
         />
-        <input
-          type="text"
+        <ha-input
+          label="Color"
           placeholder="#hex, name, or var(--…)"
           .value=${value}
           @input=${(e: Event) =>
             onChange((e.target as HTMLInputElement).value)}
-        />
+        ></ha-input>
       </div>
     `;
   }
@@ -921,13 +997,15 @@ export class SmartIconsRuleEditor extends LitElement {
         </div>
       `;
     }
-    // Selector not available — fall back to a plain comma-separated input.
+    // Selector not available — fall back to ha-input as a
+    // comma-separated text field. Same as renderEntityField's fallback
+    // path: the bare datalist autocomplete is dropped because ha-input
+    // doesn't expose `list=`, and the ha-selector path covers
+    // autocomplete on its own once it loads.
     return html`
-      <label class="field">
-        <span class="label">Target entities (comma-separated)</span>
-        <input
-          type="text"
-          list="smart-icons-entities"
+      <div class="field">
+        <ha-input
+          label="Target entities (comma-separated)"
           placeholder="light.kitchen, light.living_room"
           .value=${this.working.targetEntities.join(', ')}
           @input=${(e: Event) =>
@@ -937,8 +1015,8 @@ export class SmartIconsRuleEditor extends LitElement {
                 .map((s) => s.trim())
                 .filter((s) => s.length > 0),
             })}
-        />
-      </label>
+        ></ha-input>
+      </div>
     `;
   }
 
@@ -960,13 +1038,15 @@ export class SmartIconsRuleEditor extends LitElement {
         ${this.working.targetGlobs.map(
           (g, idx) => html`
             <div class="target-row">
-              <input
-                type="text"
+              <ha-input
+                label="Glob pattern"
                 placeholder="e.g. light.kitchen_*"
                 .value=${g.value}
                 @input=${(e: Event) =>
                   this.updateGlob(idx, (e.target as HTMLInputElement).value)}
-              />
+              ></ha-input>
+              <!-- Row-delete affordance per docs/ha-elements-guide.md
+                   decision tree, item 4. -->
               <button
                 class="btn-icon"
                 @click=${() => this.removeGlob(idx)}
@@ -976,9 +1056,10 @@ export class SmartIconsRuleEditor extends LitElement {
             ${this.renderGlobPreview(g.value)}
           `
         )}
-        <button class="btn-text add-button" @click=${this.addGlob}>
-          + Add pattern
-        </button>
+        <ha-button
+          variant="neutral"
+          @click=${this.addGlob}
+        >+ Add pattern</ha-button>
       </fieldset>
     `;
   }

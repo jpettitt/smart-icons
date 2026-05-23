@@ -1,6 +1,70 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
+## v0.3.0a2 — 2026-05-23
+
+**Alpha 2 on the v0.3 line.** Closes the rule-editor bare-form-elements
+debt called out in v0.3.0a1's release notes. No user-visible feature
+changes — the rule editor looks slightly more polished (HA-native
+field styling instead of bare-input fallback) but every existing rule
+edits and saves the same way.
+
+### What's new
+
+- **Rule editor migrated to HA-native form elements.** Every text /
+  number input that drove the rule form now renders as `ha-input`
+  (HA's current input, which replaced `ha-textfield` on 2026-04-01).
+  The Mode dropdown and threshold-comparator dropdown both render as
+  `ha-selector` with `{ select: { ..., mode: 'dropdown' } }` config.
+  The "+ Add entry" / "+ Add state" / "+ Add pattern" action buttons
+  render as `ha-button variant="neutral"`. Bare HTML survives only in
+  the cases the new `docs/ha-elements-guide.md` decision tree
+  endorses: the `<input type="color">` swatch (no first-class HA
+  color element), the per-rule and whole-config `<textarea>` YAML
+  editors (`ha-code-editor` is overkill), and icon-button-style
+  affordances (`<button class="btn-icon">×</button>` row delete,
+  `<button class="text-toggle">` code-editor toggle,
+  `<button class="action-error-dismiss">`). Each carries an inline
+  comment naming the guide.
+- **Drag-to-reorder thresholds.** The per-row ↑ / ↓ buttons in
+  threshold rules are replaced with a single drag handle on the
+  left of each row, using HA's `ha-sortable` (the same wrapper
+  HA's automation, dashboard, and area editors use). Six-dot
+  `mdi:drag` glyph, grab/grabbing cursor, drop-anywhere
+  reordering. The threshold-row layout is now a 2-column grid
+  (handle column + indented content column) so the per-row
+  fields stay aligned regardless of how many lines they wrap to.
+- **`docs/ha-elements-guide.md`** (new) — internal/contributor
+  reference for which `ha-*` elements to use, when bare HTML is OK,
+  defensive patterns for lazy-load timing, and HA design tokens.
+  Adapted from the sibling reference in `weather-radar-card`; the
+  two docs are kept in sync.
+- **Playwright e2e smoke tests** for the rule editor. Five specs
+  covering the silent zero-height failure mode the lazy-load guide
+  warns about (if an `ha-*` element didn't register, the rendered
+  box collapses to zero — no console error). Runs against the
+  docker testbed, sub-second per spec after auth is cached. See
+  `frontend/test-e2e/README.md` for the setup workflow.
+
+### Internals
+
+- 112 pytest + 85 Web Test Runner + 5 Playwright e2e + typecheck
+  green; bundle drift clean.
+- `frontend/src/panel/rule-editor.ts`: ~22 element conversions plus
+  the connectedCallback `whenDefined` defensive list extended to
+  cover `ha-input`, `ha-button`, `ha-switch` alongside the existing
+  `ha-icon-picker` and `ha-selector`.
+- `AGENTS.md` Code conventions section refreshed to point at the
+  new guide.
+- INTEGRATION_VERSION + manifest + frontend/package versions bumped
+  to 0.3.0a2.
+
+### Upgrade
+
+Drop-in from v0.3.0a1 — no behavior change, no schema migration.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.3.0a1...v0.3.0a2>
+
 ## v0.3.0a1 — 2026-05-23
 
 **Alpha.** First release on the v0.3 line. Ships the

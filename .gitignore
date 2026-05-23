@@ -37,3 +37,10 @@ env/
 config/
 .storage/
 home-assistant.log*
+
+# Playwright e2e
+frontend/test-e2e/.env
+frontend/test-e2e/.auth/
+frontend/test-results/
+frontend/playwright-report/
+frontend/test-e2e/screenshots/

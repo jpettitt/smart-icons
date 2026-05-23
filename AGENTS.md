@@ -248,11 +248,29 @@ trusting a pattern from a tutorial.** The `ha-selector` story is
 one instance of that habit.
 
 For this project specifically, the recurring "what HA actually
-gives you" cases — what `state-badge` exposes vs `ha-state-icon`,
-the `ha-button` vs `mwc-button` situation, the lazy-loading of
-`ha-*` form chunks at panel-mount time — are documented in
-[`DESIGN.md`](DESIGN.md). Read that section before writing
-frontend code that talks to HA's element library.
+gives you" cases — `ha-input` (current; replaced `ha-textfield`
+on 2026-04-01), `ha-button` (current; replaced `mwc-button`),
+`ha-selector` (the highest-level entity / number / select
+dispatcher), `ha-switch` for option toggles, `ha-state-icon` as
+the painter target, lazy-load timing on panel mount, when bare
+HTML is the right answer (color picker, YAML textarea,
+text-toggle links) — are all documented in
+[`docs/ha-elements-guide.md`](docs/ha-elements-guide.md).
+
+**Bare HTML form elements (`<input>` / `<select>` / `<textarea>`
+/ `<button>`) are a code-review fail in panel / editor / dialog
+code unless the guide's decision tree explicitly endorses them
+for the case at hand.** Reach for `ha-input` / `ha-selector` /
+`ha-switch` / `ha-button` first. The few legitimate bare
+elements (color swatch picker, YAML textarea, layout buttons
+that aren't primary actions) carry a code comment naming the
+guide.
+
+The guide is kept in sync with the sibling reference in
+`weather-radar-card` — when an HA element is renamed or
+removed, update both. Read `docs/ha-elements-guide.md` before
+writing frontend code that talks to HA's element library;
+DESIGN.md no longer duplicates the contents.
 
 ## Documentation obligations
 
@@ -299,6 +317,9 @@ dev/                                Docker HA testbed (bind-mounts the integrati
 
 ## References
 
+- [`docs/ha-elements-guide.md`](docs/ha-elements-guide.md) — which
+  `ha-*` elements to use, when bare HTML is OK, lazy-load
+  defensive patterns, design tokens. Read before touching frontend.
 - [Home Assistant core AGENTS.md][ha-core-agents]
 - [Home Assistant frontend AGENTS.md][ha-frontend-agents]
 - [HACS publishing requirements](https://hacs.xyz/docs/publish/integration)
