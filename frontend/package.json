@@ -11,10 +11,14 @@
     "watch": "esbuild src/index.ts --bundle --format=esm --target=es2022 --sourcemap --watch --outfile=../custom_components/smart_icons/static/smart_icons.js",
     "typecheck": "tsc --noEmit",
     "test": "wtr",
-    "test:watch": "wtr --watch"
+    "test:watch": "wtr --watch",
+    "e2e": "playwright test",
+    "e2e:setup": "playwright test --project=setup --headed",
+    "e2e:debug": "playwright test --debug"
   },
   "devDependencies": {
     "@open-wc/testing": "^4.0.0",
+    "@playwright/test": "^1.60.0",
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@web/dev-server-esbuild": "^1.0.4",
