@@ -1,0 +1,146 @@
+# Reference dashboard for evaluating the icon-outline prototype.
+# See docs/icon-outline-prototype.md for the variants under test
+# and the measurement plan.
+#
+# This dashboard is intentionally small and color-diverse rather than
+# entity-dense — its job is to give every variant a fair visual
+# comparison against multiple surface types (entities-row, tile,
+# tile-with-colored-bg, glance, badges) and against the
+# painted-color extremes our rules realistically hit.
+#
+# Setup, in order:
+#
+# 1. Drop the `template:` + `input_select:` blocks below into your HA
+#    configuration.yaml (or a packages/*.yaml file). Reload the
+#    `template` and `input_select` integrations from the developer
+#    tools UI.
+#
+# 2. In the Smart Icons panel, click "Add rule" → "Show code editor"
+#    and paste the YAML under "Smart Icons rule" further down this
+#    file. Save.
+#
+# 3. Add the view under "Lovelace view" to any dashboard.
+#
+# 4. Switch variants. Two ways:
+#
+#       URL query (per-load):   .../outline-proto?smart-icons-outline=v1
+#       DevTools (persistent):  __smartIcons.setOutlineVariant('v1')
+#                               __smartIcons.painter.repaintAll()
+#
+#    Variants — see docs/icon-outline-prototype.md for the full
+#    description:
+#       off  baseline (no outline)
+#       v1   auto-luminance + soft halo drop-shadow
+#       v2   auto-luminance + 4-direction hard drop-shadow
+#       v3   auto-luminance + native SVG paint-order stroke
+#       v4   theme-aware bg + 4-direction hard drop-shadow
+
+# -----------------------------------------------------------------------------
+# Helper input — cycle through painted-color extremes
+# -----------------------------------------------------------------------------
+
+input_select:
+  outline_proto_trigger:
+    name: Outline proto trigger
+    options:
+      - very_cold     # -20 °F → deep magenta  #4B0082
+      - cold          #  25 °F → light blue    #ADD8E6
+      - mild          #  60 °F → mid green     #008000
+      - warm          #  78 °F → yellow        #FFFF00
+      - hot           #  95 °F → dark orange   #FF8C00
+      - extreme       # 110 °F → dark red      #8B0000
+
+# -----------------------------------------------------------------------------
+# Sensors — one trigger, derived state
+# -----------------------------------------------------------------------------
+
+template:
+  - sensor:
+      - name: Outline proto temp
+        unique_id: outline_proto_temp
+        unit_of_measurement: "°F"
+        state: >
+          {% set t = states('input_select.outline_proto_trigger') %}
+          {% if t == 'very_cold' %} -20
+          {% elif t == 'cold' %} 25
+          {% elif t == 'mild' %} 60
+          {% elif t == 'warm' %} 78
+          {% elif t == 'hot' %} 95
+          {% elif t == 'extreme' %} 110
+          {% else %} 70 {% endif %}
+
+# -----------------------------------------------------------------------------
+# Smart Icons rule — paste this in the panel
+# -----------------------------------------------------------------------------
+#
+# targets:
+#   - sensor.outline_proto_temp
+# mode: thresholds
+# thresholds:
+#   - lt: -10
+#     color: '#4B0082'
+#     icon: mdi:thermometer-low
+#   - lt: 32
+#     color: '#ADD8E6'
+#     icon: mdi:thermometer-low
+#   - lt: 70
+#     color: '#008000'
+#     icon: mdi:thermometer
+#   - lt: 85
+#     color: '#FFFF00'
+#     icon: mdi:thermometer
+#   - lt: 100
+#     color: '#FF8C00'
+#     icon: mdi:thermometer-high
+#   - color: '#8B0000'
+#     icon: mdi:fire-circle
+
+# -----------------------------------------------------------------------------
+# Lovelace view — paste under your dashboard's `views:`
+# -----------------------------------------------------------------------------
+#
+# - title: Outline proto
+#   path: outline-proto
+#   icon: mdi:eyedropper-variant
+#   cards:
+#     - type: entities
+#       title: entities-card row
+#       entities:
+#         - input_select.outline_proto_trigger
+#         - sensor.outline_proto_temp
+#     - type: tile
+#       entity: sensor.outline_proto_temp
+#       name: tile (default background)
+#     - type: tile
+#       entity: sensor.outline_proto_temp
+#       name: tile (colored background = entity)
+#       color: yellow
+#     - type: tile
+#       entity: sensor.outline_proto_temp
+#       name: tile (colored background = blue)
+#       color: blue
+#     - type: glance
+#       title: glance card
+#       entities:
+#         - sensor.outline_proto_temp
+#     - type: button
+#       entity: sensor.outline_proto_temp
+#       name: button card
+#       show_state: true
+
+# -----------------------------------------------------------------------------
+# Scaling up for perf measurement (follow-on step)
+# -----------------------------------------------------------------------------
+#
+# Once a variant looks visually promising, generate ~100 painted
+# entities for a perf trace. Easiest way: add a second template
+# block creating sensor.outline_proto_001 … sensor.outline_proto_100,
+# each with the same state expression as outline_proto_temp, then
+# change the Smart Icons rule's target to the glob
+# `sensor.outline_proto_*`. Build a view of ~10 entities-cards × 10
+# rows each. Mass-repaint is then a single change to
+# input_select.outline_proto_trigger.
+#
+# The design doc (`docs/icon-outline-prototype.md`) has the full
+# measurement plan and the threshold numbers each variant must hit
+# to be considered for ship.

@@ -40,6 +40,7 @@
  * the event dispatch, before any microtask runs — removes that race.
  */
 
+import { applyDecoration, releaseDecoration } from './outline-proto';
 import type { StateWatcher } from './state-watcher';
 import { SMART_ICONS_COLOR_ATTR } from './types';
 
@@ -101,14 +102,24 @@ export function applyStateObjPatch(
       const raw = v?.attributes?.[SMART_ICONS_COLOR_ATTR];
       const color = typeof raw === 'string' ? raw : '';
       if (color) {
-        if (this.style.color !== color) this.style.color = color;
-        // Mirror the dataset marker the DOM-crawler path uses so
-        // tooling / tests can identify hosts we've painted, regardless
-        // of which code path applied the color.
-        this.dataset.smartIconsOwned = 'color';
+        // applyDecoration sets style.color, marks dataset.smartIconsOwned,
+        // and (when the outline-proto flag is set) adds the variant's
+        // outline. Default flag value is 'off', so this is a no-op
+        // change against pre-prototype behavior.
+        applyDecoration(
+          this as unknown as HTMLElement & {
+            style: CSSStyleDeclaration;
+            dataset: DOMStringMap;
+          },
+          color,
+        );
       } else if (this.dataset.smartIconsOwned) {
-        this.style.color = '';
-        delete this.dataset.smartIconsOwned;
+        releaseDecoration(
+          this as unknown as HTMLElement & {
+            style: CSSStyleDeclaration;
+            dataset: DOMStringMap;
+          },
+        );
       }
     },
   });
@@ -273,8 +284,10 @@ export class Painter {
       | undefined;
 
     if (color != null && color !== '') {
-      if (host.style.color !== color) host.style.color = color;
-      host.dataset[DATA_OWNED] = 'color';
+      applyDecoration(host as unknown as HTMLElement & {
+        style: CSSStyleDeclaration;
+        dataset: DOMStringMap;
+      }, color);
     } else if (host.dataset[DATA_OWNED]) {
       this.release(host);
     }
@@ -282,8 +295,10 @@ export class Painter {
 
   private release(host: IconHostWithStateObj): void {
     if (!host.dataset[DATA_OWNED]) return;
-    host.style.color = '';
-    delete host.dataset[DATA_OWNED];
+    releaseDecoration(host as unknown as HTMLElement & {
+      style: CSSStyleDeclaration;
+      dataset: DOMStringMap;
+    });
   }
 
   /** Find the entity stateObj this `<ha-state-icon>` represents.
