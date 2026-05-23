@@ -9,14 +9,16 @@ applied across the default Lovelace cards without per-card configuration.
 [![License](https://img.shields.io/github/license/jpettitt/smart-icons?style=for-the-badge)](LICENSE)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
 
-> **Status:** v0.2.2 — GA. Feature-complete for the v0.2 line: server-side
-> icon + color injection, sidebar management panel, multi-target and glob
-> rules, per-target source semantics, mapping-state autocomplete from
-> recorder history, in-panel YAML editing, admin-only management (the
-> painter still works for every user). Template-mode evaluation lands in
-> v0.3. See [CHANGELOG.md](CHANGELOG.md) for the v0.2.2 release notes
-> (delete-confirm fix, painter reliability, packaged release assets,
-> example rules library).
+> **Status:** v0.2.2 — GA. v0.3 is in progress on a feature branch:
+> contrasting auto-luminance outline on painted icons + installation-wide
+> admin toggle. See [CHANGELOG.md](CHANGELOG.md) for the in-progress
+> Unreleased entry and [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md)
+> for the design rationale.
+>
+> Template-mode evaluation, originally on the v0.3 roadmap, has been
+> demoted to demand-driven — rule stacking (priority + selective
+> matching, see [`docs/examples.md`](docs/examples.md)) already covers
+> the use cases template mode was meant for.
 
 ## What problem does it solve?
 
@@ -139,6 +141,17 @@ its own `brightness`.)
 For more ready-to-paste rules covering common entity types, see
 [docs/examples.md](docs/examples.md).
 
+### Contrasting outline (v0.3+)
+
+Every icon Smart Icons paints gets a thin contrasting outline
+(black or white, auto-picked for contrast against the painted
+color) so the glyph stays readable even when the painted color is
+close to the card background — see the screenshots in
+[`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md).
+On by default. Disable from the *Contrasting outline on painted
+icons* checkbox in the Smart Icons panel if your theme prefers
+unstyled icons.
+
 ## Compatibility
 
 - Home Assistant **2024.7** or newer (`StaticPathConfig` requirement —
@@ -152,10 +165,19 @@ For more ready-to-paste rules covering common entity types, see
 
 ## Roadmap
 
-- **v0.3** — Template-mode evaluation (Jinja, server-side), Door 1 (entity
-  settings dialog injection), YAML loader.
+- **v0.3** — Contrasting auto-luminance outline on painted icons +
+  installation-wide admin toggle (in progress on `feature/icon-outline-proto`);
+  Door 1 (entity settings dialog injection); translations framework.
 - **v0.4+** — Drag-reorder priority in the panel, import/export, icon-pack
-  picker, optional opacity decoration.
+  picker, optional opacity decoration. `_inherit` decoration values (so
+  stacked rules can change one field and inherit the other) is under
+  consideration.
+- **Demand-driven** — Template-mode evaluation; "outline every icon"
+  mode (vs. just painted icons). Both are parked unless real users
+  ask for them — rule stacking already covers the common
+  template-mode use cases (see [`docs/examples.md`](docs/examples.md)),
+  and the painted-only outline scope avoids conflicts with Mushroom /
+  card-mod / theme styling.
 
 Full backlog: [TODO.md](TODO.md) and [DESIGN.md § 11](DESIGN.md#11-roadmap).
 

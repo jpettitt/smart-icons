@@ -1,12 +1,14 @@
 # smart-icons — Design Document
 
-> **Status:** v0.2.0b2 shipped (beta). v0.1 and v0.2 features are
-> implemented and in use; v0.3 work (template-mode evaluation, Door 1
-> entity-settings injection, YAML loader) is sketched in § 11 but not
-> started. This document mixes design intent with as-built notes —
-> § 11 (Roadmap) tracks what's actually done.
+> **Status:** v0.2.2 shipped. v0.3 work in progress: contrasting
+> auto-luminance outline on painted icons + installation-wide admin
+> toggle (see § 11 and
+> [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md));
+> template-mode evaluation, originally on the v0.3 roadmap, has been
+> demoted to demand-driven. This document mixes design intent with
+> as-built notes — § 11 (Roadmap) tracks what's actually done.
 >
-> Last substantive revision 2026-05-21 (admin-gating of WS + panel).
+> Last substantive revision 2026-05-23 (v0.3 outline architecture).
 
 ## 1. Motivation
 
@@ -683,21 +685,32 @@ window.__smartIconsPoc = { host, inner, orig, mo };
 
 All commands under the `smart_icons/` namespace, registered via
 `websocket_api.async_register_command`. Schemas validated with voluptuous.
-**Every command is admin-gated** via `@websocket_api.require_admin`; a
-non-admin user gets an `unauthorized` error from each. The painter bundle
-does not call the WS API — it reads `smart_icons_color` from each entity's
-state attributes directly — so non-admin dashboards still render correctly.
+**Rule-management commands are admin-gated** via
+`@websocket_api.require_admin`; a non-admin user gets an `unauthorized`
+error from each. The painter bundle does not call the rule-management
+WS API — it reads `smart_icons_color` from each entity's state
+attributes directly — so non-admin dashboards still render correctly.
 
-| Type | Purpose | Payload | Response |
-| --- | --- | --- | --- |
-| `smart_icons/list` | snapshot of all rules | — | `{ rules: Rule[] }` |
-| `smart_icons/upsert` | add or update | `{ rule: Rule }` (id optional) | `{ id, rule }` |
-| `smart_icons/delete` | remove by id | `{ rule_id }` | `{ success: true }` |
-| `smart_icons/subscribe` | push updates | — | stream of `{ type: "added"\|"updated"\|"removed", rule, id }` |
-| `smart_icons/version` | compat info | — | `{ integration, ha_version, schema_version }` |
+| Type | Admin | Purpose | Payload | Response |
+| --- | --- | --- | --- | --- |
+| `smart_icons/list` | yes | snapshot of all rules | — | `{ rules: Rule[] }` |
+| `smart_icons/upsert` | yes | add or update | `{ rule: Rule }` (id optional) | `{ id, rule }` |
+| `smart_icons/delete` | yes | remove by id | `{ rule_id }` | `{ success: true }` |
+| `smart_icons/replace_all` | yes | atomic whole-config replace | `{ rules: Rule[] }` | `{ count: N }` |
+| `smart_icons/subscribe` | yes | push updates | — | stream of `{ type: "added"\|"updated"\|"removed", rule, id }` |
+| `smart_icons/version` | yes | compat info | — | `{ integration, ha_version, schema_version }` |
+| `smart_icons/get_options` | **no** | installation-wide options snapshot | — | `{ options: { outline_enabled: bool, ... } }` |
+| `smart_icons/update_options` | yes | merge into installation options | `{ options: { ... } }` | `{ options: <merged> }` |
 
-A `smart_icons/render_template` command for live Jinja preview lands in
-v0.3 alongside template-mode evaluation.
+`get_options` is intentionally **not** admin-gated — the painter bundle
+runs for every authenticated user and needs to read `outline_enabled`
+at bootstrap. Its return surface exposes no admin-sensitive data
+(small set of rendering preferences). Changes to options trigger an
+HA bus event `smart_icons_options_updated` so painters running for
+non-admin users learn about admin toggles without polling.
+
+Template-mode evaluation (originally tagged for a `smart_icons/render_template`
+command in v0.3) has been demoted to demand-driven — see TODO.md.
 
 ## 9. Component breakdown
 
@@ -881,14 +894,30 @@ smart-icons/
   landed in a single commit because the per-rule toggle and the
   whole-config toggle share most of their wiring.
 
-### v0.3 — template mode + Door 1
+### v0.3 — contrasting outline + Door 1
 
-- [ ] **Template mode evaluation** — Jinja rendered server-side via HA's
-  template machinery; `smart_icons/render_template` WS command for the
-  panel's live preview, rate-limited per connection.
+- [ ] **Contrasting outline on painted icons** — black-or-white outline
+  auto-picked from the painted color's W3C relative luminance,
+  rendered as native SVG `paint-order: stroke fill` on the inner glyph
+  path. Installation-wide admin toggle stored in `smart_icons.rules`
+  options + delivered to the painter via the `smart_icons_options_updated`
+  bus event. Scope: only Smart-Icons-painted icons; HA's
+  default-colored icons stay untouched. See
+  [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md)
+  for the four variants tested and the rejected alternatives.
 - [ ] **Door 1** — entity settings dialog injection with a kill-switch,
   so individual entity pages get a "Smart Icon" section.
 - [ ] Translations — en plus framework for community PRs.
+
+**Demoted from v0.3:** Template-mode evaluation. The Jinja runtime
+that v0.3 was originally going to ship has been moved to
+demand-driven status — rule stacking (priority + selective matching;
+see [`docs/examples.md`](docs/examples.md)) already covers the
+"compute decoration from state" use cases template mode was meant
+for. Pick it back up when real user demand surfaces a case that
+stacking genuinely can't express. The schema still accepts
+`mode: template` in storage (so existing rules don't break);
+runtime evaluation is just deferred.
 
 ### v0.4+ — polish
 
