@@ -13,7 +13,7 @@
  * showing/hiding this element inside an `ha-dialog`.
  */
 
-import { LitElement, html, type TemplateResult } from 'lit';
+import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { Hass, Rule, RuleMode, ThresholdEntry, Decoration } from '../types';
@@ -415,12 +415,13 @@ export class SmartIconsRuleEditor extends LitElement {
             >
               Thresholds (numeric ranges)
             </option>
-            <option
-              value="template"
-              ?selected=${this.working.mode === 'template'}
-            >
-              Template (v0.2)
-            </option>
+            ${this.working.mode === 'template'
+              ? html`
+                  <option value="template" selected>
+                    Template (deprecated — edit existing rules only)
+                  </option>
+                `
+              : nothing}
           </select>
         </label>
         ${this.working.mode === 'thresholds'
@@ -771,10 +772,16 @@ export class SmartIconsRuleEditor extends LitElement {
   }
 
   private renderTemplate() {
+    // Reachable only for legacy rules already stored with mode='template'.
+    // The mode dropdown no longer offers template as a new-rule choice —
+    // template-mode runtime evaluation is demand-driven (see TODO.md).
+    // We still render the field so existing rules can be inspected and
+    // their string round-trips through save/load without loss.
     return html`
       <fieldset>
         <legend>
-          Template mode (storage only in v0.1; runtime evaluation lands in v0.2).
+          Template mode (deprecated — storage-only). Runtime evaluation
+          is demand-driven; see TODO.md.
         </legend>
         <input
           type="text"
