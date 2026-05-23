@@ -40,7 +40,7 @@
  * the event dispatch, before any microtask runs — removes that race.
  */
 
-import { applyDecoration, releaseDecoration } from './outline-proto';
+import { applyDecoration, releaseDecoration } from './outline';
 import type { StateWatcher } from './state-watcher';
 import { SMART_ICONS_COLOR_ATTR } from './types';
 
@@ -93,7 +93,7 @@ export function applyStateObjPatch(
   Object.defineProperty(descriptorTarget, 'stateObj', {
     ...descriptor,
     set(
-      this: HTMLElement & { style: CSSStyleDeclaration; dataset: DOMStringMap },
+      this: HTMLElement,
       v: { attributes?: Record<string, unknown> } | null | undefined,
     ) {
       // Call HA's setter first so Lit's reactive bookkeeping runs
@@ -103,23 +103,10 @@ export function applyStateObjPatch(
       const color = typeof raw === 'string' ? raw : '';
       if (color) {
         // applyDecoration sets style.color, marks dataset.smartIconsOwned,
-        // and (when the outline-proto flag is set) adds the variant's
-        // outline. Default flag value is 'off', so this is a no-op
-        // change against pre-prototype behavior.
-        applyDecoration(
-          this as unknown as HTMLElement & {
-            style: CSSStyleDeclaration;
-            dataset: DOMStringMap;
-          },
-          color,
-        );
+        // and (when the outline option is enabled) adds the SVG stroke.
+        applyDecoration(this, color);
       } else if (this.dataset.smartIconsOwned) {
-        releaseDecoration(
-          this as unknown as HTMLElement & {
-            style: CSSStyleDeclaration;
-            dataset: DOMStringMap;
-          },
-        );
+        releaseDecoration(this);
       }
     },
   });
@@ -284,10 +271,7 @@ export class Painter {
       | undefined;
 
     if (color != null && color !== '') {
-      applyDecoration(host as unknown as HTMLElement & {
-        style: CSSStyleDeclaration;
-        dataset: DOMStringMap;
-      }, color);
+      applyDecoration(host, color);
     } else if (host.dataset[DATA_OWNED]) {
       this.release(host);
     }
@@ -295,10 +279,7 @@ export class Painter {
 
   private release(host: IconHostWithStateObj): void {
     if (!host.dataset[DATA_OWNED]) return;
-    releaseDecoration(host as unknown as HTMLElement & {
-      style: CSSStyleDeclaration;
-      dataset: DOMStringMap;
-    });
+    releaseDecoration(host);
   }
 
   /** Find the entity stateObj this `<ha-state-icon>` represents.

@@ -140,7 +140,7 @@ describe('evaluateRule', () => {
     ).to.be.null;
   });
 
-  it('returns null for template mode in v0.1 (deferred to v0.2)', () => {
+  it('returns null for template mode (runtime evaluation is demand-driven)', () => {
     expect(
       evaluateRule(
         rule({ mode: 'template', template: '{{ "#fff" }}' }),

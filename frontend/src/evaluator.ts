@@ -7,8 +7,8 @@
  *     comparator yields no match for that entry.
  *   - mapping: exact string match on `source.state`; `_else` is the
  *     fallback bucket; missing key + no `_else` → null.
- *   - template: server-side only (v0.2). In v0.1 we return null so
- *     template rules are inert until the WS render command lands.
+ *   - template: storage-only; runtime evaluation is demand-driven
+ *     (see TODO.md). We return null so template rules are inert.
  *
  * "Release sentinels" — `""`, `"inherit"`, `"unset"`, `null` — in either
  * decoration field mean "fall back to defaults"; if the whole decoration
@@ -114,7 +114,9 @@ export function evaluateRule(
   if (rule.mode === 'mapping' && rule.mapping) {
     return evaluateMapping(rule.mapping, sourceState);
   }
-  // template mode lands in v0.2 — server-side render via WS command.
+  // Template mode is storage-only; runtime evaluation is demand-driven
+  // (see TODO.md). Falls through to null so legacy template rules are
+  // inert without breaking storage round-trip.
   return null;
 }
 
