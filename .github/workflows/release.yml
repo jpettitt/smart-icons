@@ -106,8 +106,10 @@ jobs:
             echo "Release $TAG" > release_notes.md
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          # Treat anything containing 'b', 'rc', or 'alpha' as a prerelease
-          if [[ "$TAG" =~ (b[0-9]+|rc[0-9]+|alpha) ]]; then
+          # Treat alpha (aN / -alpha.N), beta (bN), and release-candidate
+          # (rcN) tags as prereleases. The aN / bN / rcN patterns match the
+          # version style already used in manifest.json (e.g. 0.3.0a1).
+          if [[ "$TAG" =~ (a[0-9]+|b[0-9]+|rc[0-9]+|alpha) ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
