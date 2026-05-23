@@ -12,7 +12,8 @@ Semantics follow DESIGN.md § 4.2:
   skips that entry.
 - mapping: exact string match; `_else` is the fallback; missing key with
   no `_else` → None.
-- template: server-side render via WS in v0.2; v0.1 returns None.
+- template: storage-only — runtime evaluation is demand-driven
+  (see TODO.md). evaluate_rule returns None for template-mode rules.
 
 "Release sentinels" — `""`, `"inherit"`, `"unset"`, `None` — in either
 decoration field mean "fall back to defaults"; a decoration that ends up
@@ -126,7 +127,8 @@ def evaluate_rule(
         return evaluate_thresholds(rule.thresholds, source_state)
     if rule.mode == MODE_MAPPING and rule.mapping:
         return evaluate_mapping(rule.mapping, source_state)
-    # template mode lands in v0.2.
+    # Template mode is storage-only — runtime evaluation deferred to
+    # demand-driven (see TODO.md). Falls through to None.
     return None
 
 

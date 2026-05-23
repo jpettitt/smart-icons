@@ -1,15 +1,19 @@
 """WebSocket API for Smart Icons.
 
-Five commands under the `smart_icons/` namespace (see DESIGN.md § 8).
-v0.1 ships list / upsert / delete / subscribe / version. The
-`render_template` command lands in v0.2 alongside template-mode evaluation.
+Commands under the `smart_icons/` namespace (see DESIGN.md § 8).
+Rule-management commands (list, upsert, delete, replace_all,
+subscribe, version, update_options) are admin-gated via
+`@websocket_api.require_admin`. The panel that drives them is also
+admin-only (see `frontend.py`), so rule management is an admin
+concern by design.
 
-All commands are admin-gated via `@websocket_api.require_admin`. The
-panel that drives them is also admin-only (see `frontend.py`), so
-rule management is an admin concern by design. Non-admin users still
-see painted icons on their dashboards because the painter reads
-`smart_icons_color` directly from each entity's state attributes —
-that data path doesn't traverse our WS API at all.
+`get_options` is intentionally NOT admin-gated — the painter bundle
+runs for every authenticated user and needs to read the
+installation-wide outline setting at bootstrap. Its return surface
+exposes no admin-sensitive information.
+
+Template-mode runtime evaluation (originally tagged for a
+`render_template` WS command) is demand-driven — see TODO.md.
 """
 
 from __future__ import annotations
@@ -25,15 +29,17 @@ from .const import (
     DATA_STORE,
     DOMAIN,
     WS_DELETE,
+    WS_GET_OPTIONS,
     WS_LIST,
     WS_REPLACE_ALL,
     WS_SUBSCRIBE,
+    WS_UPDATE_OPTIONS,
     WS_UPSERT,
     WS_VERSION,
 )
 from .rule import BulkReplaceError, Rule
 
-INTEGRATION_VERSION = "0.2.2b2"
+INTEGRATION_VERSION = "0.2.2"
 
 
 def async_register_commands(hass: HomeAssistant) -> None:
@@ -44,6 +50,8 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, _ws_replace_all)
     websocket_api.async_register_command(hass, _ws_subscribe)
     websocket_api.async_register_command(hass, _ws_version)
+    websocket_api.async_register_command(hass, _ws_get_options)
+    websocket_api.async_register_command(hass, _ws_update_options)
 
 
 def _store(hass: HomeAssistant):
@@ -199,3 +207,40 @@ def _ws_version(
             "schema_version": 1,
         },
     )
+
+
+# Read of installation-wide options. Intentionally NOT admin-gated:
+# the painter bundle runs for every authenticated user and needs the
+# current `outline_enabled` value at bootstrap. Returning the options
+# dict exposes no admin-sensitive information (it's a small set of
+# rendering preferences). The admin gate stays on the *update* path.
+@callback
+@websocket_api.websocket_command({vol.Required("type"): WS_GET_OPTIONS})
+def _ws_get_options(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    connection.send_result(msg["id"], {"options": _store(hass).get_options()})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_UPDATE_OPTIONS,
+        # Open-ended dict — the store's update method handles
+        # default-merging and unknown-key passthrough. Each option's
+        # specific shape is enforced by the panel UI; backend stays
+        # permissive so a newer panel against an older backend
+        # (or vice versa) doesn't drop fields silently.
+        vol.Required("options"): dict,
+    }
+)
+@websocket_api.async_response
+async def _ws_update_options(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    updated = await _store(hass).async_update_options(msg["options"])
+    connection.send_result(msg["id"], {"options": updated})

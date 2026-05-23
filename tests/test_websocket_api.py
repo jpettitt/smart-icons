@@ -5,10 +5,13 @@ from __future__ import annotations
 import pytest
 
 from custom_components.smart_icons.const import (
+    EVENT_OPTIONS_UPDATED,
     WS_DELETE,
+    WS_GET_OPTIONS,
     WS_LIST,
     WS_REPLACE_ALL,
     WS_SUBSCRIBE,
+    WS_UPDATE_OPTIONS,
     WS_UPSERT,
     WS_VERSION,
 )
@@ -238,6 +241,14 @@ async def test_version(hass, hass_ws_client, config_entry):  # noqa: ARG001
         ({"id": 1, "type": WS_REPLACE_ALL, "rules": []}, "replace_all"),
         ({"id": 1, "type": WS_SUBSCRIBE}, "subscribe"),
         ({"id": 1, "type": WS_VERSION}, "version"),
+        (
+            {
+                "id": 1,
+                "type": WS_UPDATE_OPTIONS,
+                "options": {"outline_enabled": False},
+            },
+            "update_options",
+        ),
     ],
 )
 async def test_non_admin_user_gets_unauthorized(
@@ -248,11 +259,93 @@ async def test_non_admin_user_gets_unauthorized(
     payload,
     label,  # noqa: ARG001 — purely for nicer pytest IDs
 ):
-    """All five WS commands are admin-gated via @websocket_api.require_admin.
-    A read-only user authenticated to HA still gets `unauthorized` from each
-    one. Confirms the panel-level admin guard is also enforced at the API."""
+    """All write/management WS commands are admin-gated via
+    @websocket_api.require_admin. A read-only user authenticated to HA
+    still gets `unauthorized` from each one. Confirms the panel-level
+    admin guard is also enforced at the API.
+
+    Note: `get_options` is intentionally *not* in this list — the
+    painter bundle running for every user needs to read options at
+    bootstrap. Its non-admin accessibility is asserted in a separate
+    test below."""
     ws = await hass_ws_client(hass, access_token=hass_read_only_access_token)
     await ws.send_json(payload)
     resp = await ws.receive_json()
     assert resp["success"] is False
     assert resp["error"]["code"] == "unauthorized"
+
+
+# ---------------------------------------------------------------------------
+# Options commands
+# ---------------------------------------------------------------------------
+
+
+async def test_get_options_default(hass, hass_ws_client, config_entry):  # noqa: ARG001
+    """A fresh integration reports the documented defaults."""
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": WS_GET_OPTIONS})
+    resp = await ws.receive_json()
+    assert resp["success"] is True
+    assert resp["result"] == {"options": {"outline_enabled": True}}
+
+
+async def test_get_options_is_not_admin_gated(
+    hass,
+    hass_ws_client,
+    hass_read_only_access_token,
+    config_entry,  # noqa: ARG001
+):
+    """Non-admin users must be able to read options — the painter
+    bundle runs for every authenticated user and needs to know the
+    `outline_enabled` value at bootstrap."""
+    ws = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await ws.send_json({"id": 1, "type": WS_GET_OPTIONS})
+    resp = await ws.receive_json()
+    assert resp["success"] is True
+    assert resp["result"]["options"]["outline_enabled"] is True
+
+
+async def test_update_options_returns_merged_state(
+    hass, hass_ws_client, config_entry  # noqa: ARG001
+):
+    """Update returns the full options dict so the panel can update
+    state without a second `get_options` round trip."""
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": WS_UPDATE_OPTIONS,
+            "options": {"outline_enabled": False},
+        }
+    )
+    resp = await ws.receive_json()
+    assert resp["success"] is True
+    assert resp["result"]["options"]["outline_enabled"] is False
+
+    # Subsequent get_options reflects the change.
+    await ws.send_json({"id": 2, "type": WS_GET_OPTIONS})
+    resp = await ws.receive_json()
+    assert resp["result"]["options"]["outline_enabled"] is False
+
+
+async def test_update_options_fires_bus_event(
+    hass, hass_ws_client, config_entry  # noqa: ARG001
+):
+    """The event is the channel non-admin painters use to learn about
+    admin toggles. Verifies the WS command path fires it (the store
+    test covers the storage-only path)."""
+    received: list[dict] = []
+    hass.bus.async_listen(EVENT_OPTIONS_UPDATED, lambda ev: received.append(ev.data))
+
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": WS_UPDATE_OPTIONS,
+            "options": {"outline_enabled": False},
+        }
+    )
+    await ws.receive_json()
+    await hass.async_block_till_done()
+
+    assert received == [{"outline_enabled": False}]

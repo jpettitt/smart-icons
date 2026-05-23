@@ -3,8 +3,9 @@
 A rule produces a *decoration* — `{color?, icon?}` — for a target entity,
 driven by the state of a source entity. Three modes (thresholds, mapping,
 template) are accepted at the storage layer; thresholds and mapping are
-fully validated in v0.1, while template strings are accepted but their
-runtime evaluation is deferred to v0.2.
+the two supported runtime modes. Template strings still validate and
+round-trip through storage so existing rules don't break, but runtime
+evaluation is demand-driven (see TODO.md) and currently returns None.
 """
 
 from __future__ import annotations

@@ -118,7 +118,10 @@ class TestEvaluateRule:
         rule = _rule(mode="thresholds", thresholds=[{"color": "#fff"}])
         assert evaluate_rule(rule, None) is None
 
-    def test_template_mode_returns_none_in_v01(self):
+    def test_template_mode_returns_none(self):
+        # Template-mode runtime evaluation is demand-driven (see
+        # TODO.md). Storage round-tripping still works, but evaluation
+        # is inert until / unless we ship template-mode evaluation.
         rule = _rule(mode="template", template='{{ "#fff" }}')
         assert evaluate_rule(rule, "on") is None
 

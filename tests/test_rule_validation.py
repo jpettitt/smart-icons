@@ -53,8 +53,9 @@ def test_valid_mapping_rule():
 
 
 def test_valid_template_rule():
-    # v0.1 accepts template-mode rules at the storage layer (forward-compat);
-    # evaluation lands in v0.2.
+    # Template-mode rules round-trip through storage validation.
+    # Runtime evaluation is demand-driven (see TODO.md); storage
+    # validation stays so existing rules don't break.
     out = validate_rule(
         {
             "target": "light.kitchen",
