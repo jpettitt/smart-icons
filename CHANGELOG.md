@@ -1,6 +1,59 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
+## Unreleased — v0.3 line
+
+In progress on `feature/icon-outline-proto`. Not yet released; pull
+requests / external use should still target v0.2.2.
+
+### What's new
+
+- **Contrasting outline on painted icons.** Smart Icons now draws a
+  thin black or white outline around every icon it paints, picked
+  automatically for contrast against the painted color (W3C relative
+  luminance). Fixes the "yellow icon on a light theme card" /
+  "dark-blue icon on a dark card" readability failure mode that
+  motivated this feature. Implemented as a native SVG
+  `paint-order: stroke fill` on the inner glyph path — composited
+  on the GPU in a single render pass alongside the fill, no CSS
+  filter overhead. See
+  [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md)
+  for the prototype variants tested and why this approach won.
+- **Installation-wide outline toggle.** New checkbox above the rules
+  table in the Smart Icons panel: *Contrasting outline on painted
+  icons* (default on). Admin-only, persisted in the integration's
+  storage alongside the rules, applies live to every painted icon
+  across the install via the new `smart_icons_options_updated`
+  bus event. Disable if you have a theme or design language that
+  prefers unstyled icons.
+- **Options storage + WS commands.** New top-level `options` dict in
+  `smart_icons.rules` storage doc — future installation-wide
+  preferences (e.g. an "outline every icon" mode) will live here
+  without a schema bump. Two new WS commands: `smart_icons/get_options`
+  (any authenticated user, so the painter bundle can read defaults
+  for non-admin viewers) and `smart_icons/update_options` (admin
+  gate).
+
+### Internals
+
+- 112 pytest + 85 Web Test Runner tests green (+12 backend, +12
+  frontend over v0.2.2); typecheck clean.
+- `frontend/src/outline-proto.ts` removed; replaced by the
+  shipped-quality `frontend/src/outline.ts` (rename preserved in
+  git history).
+- Template-mode evaluation moved from a v0.3 commitment to
+  [TODO.md](TODO.md)'s "Followups & ideas" parking lot — rule
+  stacking (priority + selective matching) already covers the
+  use cases template mode was meant for. See the new note in
+  TODO.md and the worked example in
+  [`docs/examples.md`](docs/examples.md).
+
+### Upgrade
+
+Drop-in from v0.2.2 — no schema migration. The outline is on by
+default for the readability improvement; disable from the panel if
+you prefer unstyled icons.
+
 ## v0.2.2 — 2026-05-22
 
 GA on the v0.2.2 line — promotes the painter-reliability fixes from
