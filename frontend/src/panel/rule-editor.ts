@@ -107,6 +107,8 @@ export class SmartIconsRuleEditor extends LitElement {
       'ha-input',
       'ha-button',
       'ha-switch',
+      'ha-sortable',
+      'ha-icon',
     ]) {
       if (!customElements.get(tag)) {
         void customElements
@@ -671,7 +673,7 @@ export class SmartIconsRuleEditor extends LitElement {
       <fieldset>
         <legend>
           Threshold entries — first matching wins; the entry with no
-          comparator is the "else" branch. Use ↑ ↓ to reorder.
+          comparator is the "else" branch. Drag the handle to reorder.
         </legend>
         ${entries.length === 0
           ? html`<p class="fieldset-hint">
@@ -680,63 +682,78 @@ export class SmartIconsRuleEditor extends LitElement {
               The first matching entry wins.
             </p>`
           : null}
+        <!-- ha-sortable is HA's canonical drag-reorder wrapper. It
+             attaches SortableJS to its FIRST DIRECT CHILD (the
+             container div below, not to ha-sortable itself), then
+             uses handle-selector + draggable-selector to identify
+             which descendants initiate drags and which participate
+             as items. The explicit .rollback=false matches HA's
+             own editors and avoids SortableJS leaving a stale
+             comment placeholder behind when Lit re-renders the
+             list on a state change. -->
+        <!-- prettier-ignore -->
+        <!-- (Lit/TS template-literal parser interprets dollar-brace
+             inside HTML comments — so any rollback / interpolation
+             example is paraphrased above rather than written
+             literally.) -->
+        <ha-sortable
+          handle-selector=".handle"
+          draggable-selector=".threshold-row"
+          .rollback=${false}
+          @item-moved=${this.onThresholdMoved}
+        >
+          <div class="threshold-rows">
         ${entries.map(
           (t, idx) => html`
-            <div class="row threshold-row">
-              <!-- Reorder + delete affordances — bare buttons per
-                   docs/ha-elements-guide.md decision tree, item 4
-                   (icon-button-style affordances, not primary actions). -->
-              <div class="reorder-buttons">
-                <button
-                  class="btn-icon"
-                  ?disabled=${idx === 0}
-                  @click=${() => this.moveThreshold(idx, -1)}
-                  title="Move up"
-                >↑</button>
-                <button
-                  class="btn-icon"
-                  ?disabled=${idx === entries.length - 1}
-                  @click=${() => this.moveThreshold(idx, 1)}
-                  title="Move down"
-                >↓</button>
+            <div class="threshold-row">
+              <!-- Drag handle — HA's canonical "six dots" mdi:drag
+                   glyph picked up by ha-sortable via the
+                   handle-selector. Sits in column 1, aligned to the
+                   top of the row content. -->
+              <div class="handle" title="Drag to reorder">
+                <ha-icon icon="mdi:drag"></ha-icon>
               </div>
-              <ha-selector
-                .hass=${this.hass}
-                .selector=${{
-                  select: {
-                    options: COMPARATOR_OPTIONS,
-                    mode: 'dropdown',
-                  },
-                }}
-                .value=${this.thresholdComparator(t)}
-                .label=${'Comparator'}
-                @value-changed=${(e: CustomEvent<{ value: string }>) =>
-                  this.setThresholdComparator(idx, e.detail?.value ?? '')}
-              ></ha-selector>
-              <ha-input
-                label="Value"
-                .value=${this.thresholdValue(t)}
-                ?disabled=${this.thresholdComparator(t) === ''}
-                @input=${(e: Event) =>
-                  this.setThresholdValue(
-                    idx,
-                    (e.target as HTMLInputElement).value
-                  )}
-              ></ha-input>
-              ${this.renderColorInput(t.color ?? '', (v) =>
-                this.updateThreshold(idx, { color: v })
-              )}
-              ${this.renderIconField(t.icon ?? '', (v) =>
-                this.updateThreshold(idx, { icon: v })
-              )}
-              <button
-                class="btn-icon"
-                @click=${() => this.removeThreshold(idx)}
-                title="Remove"
-              >×</button>
+              <div class="threshold-row-fields">
+                <ha-selector
+                  .hass=${this.hass}
+                  .selector=${{
+                    select: {
+                      options: COMPARATOR_OPTIONS,
+                      mode: 'dropdown',
+                    },
+                  }}
+                  .value=${this.thresholdComparator(t)}
+                  .label=${'Comparator'}
+                  @value-changed=${(e: CustomEvent<{ value: string }>) =>
+                    this.setThresholdComparator(idx, e.detail?.value ?? '')}
+                ></ha-selector>
+                <ha-input
+                  label="Value"
+                  .value=${this.thresholdValue(t)}
+                  ?disabled=${this.thresholdComparator(t) === ''}
+                  @input=${(e: Event) =>
+                    this.setThresholdValue(
+                      idx,
+                      (e.target as HTMLInputElement).value
+                    )}
+                ></ha-input>
+                ${this.renderColorInput(t.color ?? '', (v) =>
+                  this.updateThreshold(idx, { color: v })
+                )}
+                ${this.renderIconField(t.icon ?? '', (v) =>
+                  this.updateThreshold(idx, { icon: v })
+                )}
+                <button
+                  class="btn-icon"
+                  @click=${() => this.removeThreshold(idx)}
+                  title="Remove"
+                >×</button>
+              </div>
             </div>
           `
         )}
+          </div>
+        </ha-sortable>
         <ha-button
           variant="neutral"
           @click=${this.addThreshold}
@@ -745,13 +762,28 @@ export class SmartIconsRuleEditor extends LitElement {
     `;
   }
 
-  private moveThreshold(idx: number, delta: -1 | 1): void {
-    const target = idx + delta;
-    if (target < 0 || target >= this.working.thresholds.length) return;
+  /** Reorder a threshold entry on a successful drag drop. Event detail
+   *  shape `{ oldIndex, newIndex }` matches ha-sortable's contract and
+   *  HA's own _itemMoved handlers across the frontend codebase. */
+  private onThresholdMoved = (
+    e: CustomEvent<{ oldIndex: number; newIndex: number }>,
+  ): void => {
+    e.stopPropagation();
+    const { oldIndex, newIndex } = e.detail;
+    if (
+      oldIndex === newIndex ||
+      oldIndex < 0 ||
+      newIndex < 0 ||
+      oldIndex >= this.working.thresholds.length ||
+      newIndex >= this.working.thresholds.length
+    ) {
+      return;
+    }
     const next = [...this.working.thresholds];
-    [next[idx], next[target]] = [next[target], next[idx]];
+    const [moved] = next.splice(oldIndex, 1);
+    next.splice(newIndex, 0, moved);
     this.working = { ...this.working, thresholds: next };
-  }
+  };
 
   private renderMapping() {
     const entries = this.working.mapping;

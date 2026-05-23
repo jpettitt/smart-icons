@@ -611,16 +611,62 @@ export const editorStyles = css`
   .row > .btn-icon {
     flex: 0 0 auto;
   }
-  .reorder-buttons {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    flex: 0 0 auto;
+  /* Threshold-row layout — drag handle in column 1, the entry's
+     comparator + value + color + icon + delete in column 2 (which
+     reflows inside via the existing .row-style flex rules).
+     CSS Grid lets the handle align to the top of the content
+     block regardless of how many lines the fields wrap to. */
+  .threshold-row {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    column-gap: 12px;
+    align-items: start;
+    padding: 10px 0;
+    border-top: 1px solid var(--divider-color, #e0e0e0);
   }
-  .reorder-buttons .btn-icon {
-    padding: 0 6px;
-    font-size: 1em;
-    line-height: 1.2;
+  .threshold-row:first-of-type {
+    border-top: none;
+  }
+  .threshold-row-fields {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  /* Drag handle for ha-sortable threshold reordering. The grab/grabbing
+     cursors match HA's own area / dashboard / automation editors;
+     ha-sortable picks this element up via the handle-selector=".handle"
+     attribute on the wrapping <ha-sortable>. Top-padded so the dots
+     align with the first field's vertical center even though
+     align-items: start. */
+  .handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 56px;
+    padding-top: 4px;
+    cursor: grab;
+    color: var(--secondary-text-color, #757575);
+    /* touch-action: none lets SortableJS take over pointer events
+       reliably on touch devices and prevents the browser's own
+       scroll/pan from competing with drag pickup. HA's own
+       sortable handles use the same property. */
+    touch-action: none;
+    user-select: none;
+  }
+  .handle:active {
+    cursor: grabbing;
+  }
+  .handle ha-icon {
+    --mdc-icon-size: 22px;
+    /* pointer-events: none on the descendant ensures pointerdown
+       fires on the .handle div directly — SortableJS's handle
+       check matches against the click target via closest(), so
+       either would work, but keeping the target at .handle
+       sidesteps any host-attribute corner case. */
+    pointer-events: none;
   }
   /* Targets list: each row is a single text input plus a remove button. */
   .target-row {
@@ -637,15 +683,10 @@ export const editorStyles = css`
     opacity: 0.3;
     cursor: not-allowed;
   }
-  /* For thresholds rows: comparator + value + color + icon + remove = 5 cols */
-  .row:has(select:not(.legacy)) {
-    grid-template-columns:
-      80px
-      minmax(80px, 1fr)
-      minmax(160px, 2fr)
-      minmax(140px, 2fr)
-      auto;
-  }
+  /* (Dead grid-template-columns rule for threshold rows removed
+     during the v0.3.0a2 conversion — .row is flexbox, not grid,
+     and the old <select>-targeting selector no longer matches the
+     ha-selector replacement.) */
   .swatch-input {
     display: flex;
     align-items: center;
