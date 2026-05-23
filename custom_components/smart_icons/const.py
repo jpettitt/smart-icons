@@ -14,6 +14,21 @@ WS_DELETE = f"{DOMAIN}/delete"
 WS_REPLACE_ALL = f"{DOMAIN}/replace_all"
 WS_SUBSCRIBE = f"{DOMAIN}/subscribe"
 WS_VERSION = f"{DOMAIN}/version"
+WS_GET_OPTIONS = f"{DOMAIN}/get_options"
+WS_UPDATE_OPTIONS = f"{DOMAIN}/update_options"
+
+# Installation-wide options stored alongside rules in the same Store
+# doc. Schema is an open dict so we can grow the set without bumping
+# STORAGE_VERSION; unknown keys round-trip through the WS layer
+# untouched so future-versioned panels stay backward compatible.
+OPTION_OUTLINE_ENABLED = "outline_enabled"
+DEFAULT_OPTIONS: dict = {OPTION_OUTLINE_ENABLED: True}
+
+# HA bus event fired when admin changes any option via the WS update
+# command. Carries the full updated options dict as data. The frontend
+# painter subscribes to this so non-admin users still see option
+# changes take effect without needing to read our admin-gated WS API.
+EVENT_OPTIONS_UPDATED = f"{DOMAIN}_options_updated"
 
 DATA_STORE = "store"
 DATA_INJECTOR = "injector"

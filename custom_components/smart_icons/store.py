@@ -17,10 +17,17 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from homeassistant.util.ulid import ulid_now
 
-from .const import STORAGE_KEY, STORAGE_MINOR_VERSION, STORAGE_VERSION
+from .const import (
+    DEFAULT_OPTIONS,
+    EVENT_OPTIONS_UPDATED,
+    STORAGE_KEY,
+    STORAGE_MINOR_VERSION,
+    STORAGE_VERSION,
+)
 from .rule import BulkReplaceError, Rule, validate_rule
 
 Listener = Callable[[str, Rule], None]
+OptionsListener = Callable[[dict[str, Any]], None]
 
 
 class RuleStore:
@@ -36,11 +43,25 @@ class RuleStore:
         )
         self._rules: dict[str, Rule] = {}
         self._listeners: list[Listener] = []
+        # Installation-wide options. Defaults live in const.DEFAULT_OPTIONS;
+        # async_load merges any persisted overrides in, so new option keys
+        # added in future minor versions pick up their default automatically
+        # for users on older saved docs (no migration needed).
+        self._options: dict[str, Any] = dict(DEFAULT_OPTIONS)
+        self._options_listeners: list[OptionsListener] = []
 
     async def async_load(self) -> None:
         """Hydrate the cache from disk. Safe to call once at setup."""
         data = await self._store.async_load() or {}
         rules = data.get("rules", []) if isinstance(data, dict) else []
+        stored_options = (
+            data.get("options", {}) if isinstance(data, dict) else {}
+        )
+        # Start from defaults, then layer persisted values on top. Unknown
+        # keys round-trip — future panel versions can store option keys
+        # the current backend doesn't know about, and a downgrade won't
+        # silently drop them.
+        self._options = {**DEFAULT_OPTIONS, **stored_options}
         self._rules = {}
         for raw in rules:
             # Stored rules were validated on write, but re-validate on read
@@ -60,7 +81,10 @@ class RuleStore:
     async def async_save(self) -> None:
         """Persist current cache to disk."""
         await self._store.async_save(
-            {"rules": [r.to_dict() for r in self._rules.values()]}
+            {
+                "rules": [r.to_dict() for r in self._rules.values()],
+                "options": self._options,
+            }
         )
 
     @callback
@@ -196,3 +220,61 @@ class RuleStore:
         # to unsubscribe themselves without mutating the iteration.
         for listener in list(self._listeners):
             listener(event, rule)
+
+    # ------------------------------------------------------------------
+    # Options API (installation-wide, admin-controlled via WS)
+    # ------------------------------------------------------------------
+
+    @callback
+    def get_options(self) -> dict[str, Any]:
+        """Snapshot of the current options dict.
+
+        Always returns a fresh copy so callers can pass it across the
+        WS boundary without worrying about mutation back into our cache.
+        """
+        return dict(self._options)
+
+    @callback
+    def get_option(self, key: str, default: Any = None) -> Any:
+        return self._options.get(key, default)
+
+    async def async_update_options(self, options: dict[str, Any]) -> dict[str, Any]:
+        """Merge `options` into the current options dict and persist.
+
+        Returns the resulting options snapshot. Fires an HA bus event
+        (`smart_icons_options_updated`) with the snapshot as data, so
+        frontend painters — including those running for non-admin
+        users who can't call our WS API — pick up the change live.
+
+        Skips persistence and the event entirely if no key actually
+        changed, to avoid spurious paint storms when a panel re-sends
+        the same options on save.
+        """
+        merged = {**self._options, **options}
+        if merged == self._options:
+            return dict(self._options)
+        self._options = merged
+        await self.async_save()
+        # In-process subscriber fan-out for tests + internal listeners.
+        for listener in list(self._options_listeners):
+            listener(self._options)
+        # HA bus event for the frontend painter, which subscribes to the
+        # event bus via the standard frontend WS connection (no admin
+        # gate, available to every authenticated user).
+        self._hass.bus.async_fire(EVENT_OPTIONS_UPDATED, dict(self._options))
+        return dict(self._options)
+
+    def subscribe_options(
+        self, callback_: OptionsListener
+    ) -> Callable[[], None]:
+        """Register a listener for in-process options changes. Used by
+        tests and any internal consumer that needs the new options
+        before the bus event has been dispatched. Returns an
+        unsubscribe callable."""
+        self._options_listeners.append(callback_)
+
+        def _unsub() -> None:
+            if callback_ in self._options_listeners:
+                self._options_listeners.remove(callback_)
+
+        return _unsub
