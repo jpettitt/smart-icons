@@ -4,11 +4,13 @@
  * Registered by the integration's frontend.py as a `_panel_custom`. HA
  * passes us `hass` and `narrow` as Lit properties when the panel mounts.
  *
- * Surfaces in v0.2: table of rules with Edit / Duplicate / YAML / Delete
- * actions backed by the admin-only WS API; an Import YAML button in the
- * header for adding rules pasted from a gist; a per-rule "Copy as YAML"
- * dialog for sharing one rule. Sort, search, drag-reorder, and bulk
- * export are still v0.3+.
+ * Current surfaces: table of rules with Edit / Duplicate / Delete
+ * actions backed by the admin-only WS API; per-rule YAML view via the
+ * editor's Show code editor toggle; whole-config YAML view via the
+ * panel-level Show code editor toggle (atomic replace_all save);
+ * installation-wide outline toggle (Contrasting outline on painted
+ * icons). Sort, search, drag-reorder priority, and import/export
+ * still on the roadmap (see TODO.md).
  */
 
 import { LitElement, html, nothing } from 'lit';
@@ -86,8 +88,16 @@ export class SmartIconsPanel extends LitElement {
   // fires after the user clicks Discard.
   @state() private pendingDiscard = false;
 
+  // Installation-wide options. Hydrated from the backend on connect
+  // and kept live via the `smart_icons_options_updated` event. We
+  // default `outlineEnabled` to true to match the backend default —
+  // a brief mismatch between mount and the WS round-trip would
+  // otherwise render the checkbox in the wrong state.
+  @state() private outlineEnabled = true;
+
   private store?: RuleStore;
   private unsubscribe?: () => void;
+  private optionsUnsub?: () => void;
   // Ref into the panel-level YAML textarea so per-rule error items
   // can focus + select-range to highlight the failing rule.
   private codeTextareaRef: Ref<HTMLTextAreaElement> = createRef();
@@ -100,6 +110,7 @@ export class SmartIconsPanel extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this.unsubscribe?.();
+    this.optionsUnsub?.();
     void this.store?.disconnect();
   }
 
@@ -124,11 +135,41 @@ export class SmartIconsPanel extends LitElement {
               </div>
             `
           : nothing}
+        ${this.renderOptionsRow()}
         ${this.codeMode ? this.renderCodeView() : this.renderVisualView()}
       </ha-card>
       ${this.dialogOpen ? this.renderDialog() : nothing}
       ${this.pendingDelete ? this.renderDeleteConfirm() : nothing}
       ${this.pendingDiscard ? this.renderDiscardConfirm() : nothing}
+    `;
+  }
+
+  /** Installation-wide options row. Uses HA's native `<ha-switch>`,
+   *  the canonical option-toggle element across HA's own settings,
+   *  backup, and onboarding panels. ha-switch is reliably defined
+   *  by the time any custom panel mounts (verified by grepping
+   *  hass_frontend — separate concern from `ha-textfield`, which
+   *  *was* lazy-load-unreliable and is the reason the rule editor
+   *  uses plain inputs styled with HA CSS variables). */
+  private renderOptionsRow() {
+    return html`
+      <div class="options-row">
+        <label class="option-toggle">
+          <span class="option-label">
+            <strong>Contrasting outline on painted icons</strong>
+            <span class="option-help">
+              Adds a black/white outline (auto-picked for contrast) to
+              every icon Smart Icons paints. Helps when the painted
+              color matches the card background (e.g. yellow icons on
+              a light theme).
+            </span>
+          </span>
+          <ha-switch
+            .checked=${this.outlineEnabled}
+            @change=${this.toggleOutline}
+          ></ha-switch>
+        </label>
+      </div>
     `;
   }
 
@@ -486,7 +527,64 @@ export class SmartIconsPanel extends LitElement {
       // eslint-disable-next-line no-console
       console.error('[smart-icons-panel] failed to connect WS', err);
     }
+    void this.initOptions();
   }
+
+  /** Hydrate installation-wide options and subscribe to live changes.
+   *
+   *  Independent from `initStore` so a failure to read options doesn't
+   *  block rule loading and vice versa. Both run concurrently against
+   *  the same WS connection. On any error the local state stays at the
+   *  default (matching the backend default), so the panel remains
+   *  usable; only the checkbox may briefly lag the on-disk value. */
+  private async initOptions(): Promise<void> {
+    try {
+      const result = await this.hass.connection.sendMessagePromise<{
+        options: { outline_enabled?: boolean };
+      }>({ type: 'smart_icons/get_options' });
+      if (typeof result.options.outline_enabled === 'boolean') {
+        this.outlineEnabled = result.options.outline_enabled;
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[smart-icons-panel] failed to read options', err);
+    }
+    try {
+      this.optionsUnsub = await this.hass.connection.subscribeEvents<{
+        data: { outline_enabled?: boolean };
+      }>((event) => {
+        if (typeof event.data.outline_enabled === 'boolean') {
+          this.outlineEnabled = event.data.outline_enabled;
+        }
+      }, 'smart_icons_options_updated');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[smart-icons-panel] failed to subscribe to options updates',
+        err,
+      );
+    }
+  }
+
+  private toggleOutline = async (e: Event): Promise<void> => {
+    const checked = (e.target as HTMLInputElement).checked;
+    // Optimistic local update — the bus event will reconcile if
+    // something diverges. Saves a flicker on slow connections.
+    this.outlineEnabled = checked;
+    try {
+      await this.hass.connection.sendMessagePromise({
+        type: 'smart_icons/update_options',
+        options: { outline_enabled: checked },
+      });
+    } catch (err) {
+      // Roll back the optimistic update and surface the error.
+      this.outlineEnabled = !checked;
+      this.actionError =
+        err instanceof Error
+          ? `Failed to update options: ${err.message}`
+          : 'Failed to update options.';
+    }
+  };
 
   // ---- actions ----
 

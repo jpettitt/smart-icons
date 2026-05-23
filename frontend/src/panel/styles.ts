@@ -1,11 +1,18 @@
 /**
  * Shared styles for the Smart Icons panel UI.
  *
- * Plain HTML inputs styled with HA's CSS variables (`--primary-text-color`,
- * `--divider-color`, etc.) so we get theme-correct colors and dark-mode
- * adaptation without depending on ha-textfield's load order. ha-switch
- * is the only HA-specific input we use; everything else is `<input>` /
- * `<select>` / `<button>`.
+ * The panel-level option toggle uses HA's native `<ha-switch>` and
+ * other HA-native elements (`ha-card`, `ha-button`, `ha-selector`,
+ * `ha-icon-picker`, `ha-dialog`) per the project's
+ * no-bare-form-elements rule.
+ *
+ * The rule editor's per-row form fields are currently plain HTML
+ * `<input>` / `<select>` / `<button>` styled with HA CSS variables
+ * (`--primary-text-color`, `--divider-color`, etc.). This dates to
+ * a workaround for `ha-textfield`'s lazy-load chunk being
+ * unreliable at panel-mount time. Tracked for follow-up in
+ * TODO.md (convert to ha-textfield / ha-select / ha-button with
+ * `customElements.whenDefined` fallback where needed).
  */
 
 import { css } from 'lit';
@@ -86,6 +93,33 @@ export const panelStyles = css`
     justify-content: flex-end;
     gap: 8px;
     margin-top: 20px;
+  }
+  /* Installation-wide options row above the rules table. Uses HA's
+     native <ha-switch> per the project's no-bare-form-elements
+     rule. Label on the left, switch slotted to the right via flex. */
+  .options-row {
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: var(--secondary-background-color, #f5f5f5);
+    border-radius: 8px;
+  }
+  .option-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    cursor: pointer;
+  }
+  .option-label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+  .option-help {
+    font-size: 0.875em;
+    color: var(--secondary-text-color, #757575);
+    line-height: 1.4;
   }
   /* "Show code editor" / "Show visual editor" toggle. Plain text in
      the primary color — matches HA's automation-editor pattern. */
