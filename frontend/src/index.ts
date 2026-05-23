@@ -20,6 +20,11 @@
  * the only one that talks to `smart_icons/*` WS commands.
  */
 
+import {
+  getOutlineVariant,
+  setOutlineVariant,
+  type OutlineVariant,
+} from './outline-proto';
 import { Painter, patchHaStateIcon, type PatchResult } from './painter';
 import { StateWatcher } from './state-watcher';
 import type { Hass } from './types';
@@ -106,9 +111,20 @@ async function bootstrap(): Promise<void> {
   (window as unknown as { __smartIcons: unknown }).__smartIcons = {
     watcher,
     painter,
+    // Outline-prototype debug surface — see frontend/src/outline-proto.ts
+    // and docs/icon-outline-prototype.md. Lets devtools users flip
+    // variants without editing storage by hand.
+    getOutlineVariant,
+    setOutlineVariant: (v: OutlineVariant) => {
+      setOutlineVariant(v);
+      painter.repaintAll();
+    },
   };
+  const activeVariant = getOutlineVariant();
   // eslint-disable-next-line no-console
-  console.log('[smart-icons] painter started');
+  console.log(
+    `[smart-icons] painter started (outline-proto: ${activeVariant})`,
+  );
 
   await watcher.start();
   // watcher.start() is the moment our cache is reliably populated
