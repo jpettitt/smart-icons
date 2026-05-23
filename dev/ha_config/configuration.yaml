@@ -10,3 +10,49 @@ logger:
   default: info
   logs:
     custom_components.smart_icons: debug
+
+# Outline-prototype helpers — see docs/icon-outline-prototype.md
+# and docs/icon-outline-prototype-dashboard.yaml. Drives the
+# painted temperature on the outline dashboard.
+#
+# The themes below override `card-background-color` so each tile
+# card on the outline dashboard renders with a different background.
+# `color:` on a tile card sets the icon color (which the painter
+# overrides), not the card background — themes are how you actually
+# change the surface color.
+frontend:
+  themes:
+    outline_proto_yellow:
+      card-background-color: "#FFD700"
+      ha-card-background: "#FFD700"
+    outline_proto_navy:
+      card-background-color: "#0D1233"
+      ha-card-background: "#0D1233"
+    outline_proto_midgray:
+      card-background-color: "#808080"
+      ha-card-background: "#808080"
+input_select:
+  outline_proto_trigger:
+    name: Outline proto trigger
+    options:
+      - very_cold
+      - cold
+      - mild
+      - warm
+      - hot
+      - extreme
+
+template:
+  - sensor:
+      - name: Outline proto temp
+        unique_id: outline_proto_temp
+        unit_of_measurement: "°F"
+        state: >
+          {% set t = states('input_select.outline_proto_trigger') %}
+          {% if t == 'very_cold' %} -20
+          {% elif t == 'cold' %} 25
+          {% elif t == 'mild' %} 60
+          {% elif t == 'warm' %} 78
+          {% elif t == 'hot' %} 95
+          {% elif t == 'extreme' %} 110
+          {% else %} 70 {% endif %}
