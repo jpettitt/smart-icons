@@ -1,10 +1,13 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
-## Unreleased — v0.3 line
+## v0.3.0a1 — 2026-05-23
 
-In progress on `feature/icon-outline-proto`. Not yet released; pull
-requests / external use should still target v0.2.2.
+**Alpha.** First release on the v0.3 line. Ships the
+contrasting-outline feature and the supporting options storage +
+WS plumbing. Drop-in upgrade from v0.2.2; no schema migration.
+HACS users on the beta channel will pick this up; regular-channel
+users stay on v0.2.2 until v0.3.0 GA.
 
 ### What's new
 
@@ -48,11 +51,24 @@ requests / external use should still target v0.2.2.
   TODO.md and the worked example in
   [`docs/examples.md`](docs/examples.md).
 
+### Known debt
+
+- The rule editor uses plain HTML `<input>` / `<select>` /
+  `<textarea>` / `<button>` styled with HA CSS variables (a
+  workaround dating to a historical `ha-textfield` lazy-load
+  bug). Targeted for conversion to `ha-textfield` / `ha-select` /
+  `ha-button` in v0.3.0a2 per the project's
+  no-bare-form-elements rule. Doesn't affect the alpha's
+  user-visible behavior; flagged here for transparency. See
+  TODO.md.
+
 ### Upgrade
 
 Drop-in from v0.2.2 — no schema migration. The outline is on by
-default for the readability improvement; disable from the panel if
-you prefer unstyled icons.
+default for the readability improvement; disable from the panel
+toggle if you prefer unstyled icons.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.2.2...v0.3.0a1>
 
 ## v0.2.2 — 2026-05-22
 
