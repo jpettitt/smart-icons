@@ -78,10 +78,10 @@ recur in every example after this:
   see the [sun-direction example below](#direction-aware-variant)
   for the same gotcha with `True` / `False`.
 
-### Same rule with a background chip (v0.3+)
+### Same rule with a background chip
 
-Same target, different visual idiom: the v0.3 `background_color`
-field paints a Mushroom-style colored circle behind the icon. With
+Same target, different visual idiom: the `background_color` field
+paints a Mushroom-style colored circle behind the icon. With
 the chip carrying the state (red = open, green = closed), the icon
 itself can stay simple — a white glyph reads at a glance against
 either fill. No icon override needed; HA's default door glyph is
@@ -139,7 +139,7 @@ paints just the chip and leaves the icon's natural color and glyph
 alone, which is the right shape for a "highlight" rule layered on
 top of an existing state-driven rule (the field-level merger keeps
 both effects; see the
-[sun example](#same-effect-via-field-level-merge-v030a3) for what
+[sun example](#same-effect-via-field-level-merge) for what
 that looks like in practice).
 
 ## Locks
@@ -529,21 +529,21 @@ generalizes to other "combine two views of the same entity" problems:
   visually on the horizon. The chosen ±6° band roughly matches civil
   twilight.
 
-The two-rule + dead-zone pattern works on every Smart Icons version
-and is worth knowing because the same "let a lower rule fill in the
-gap" trick generalizes (e.g. "unavailable warning + thresholds" in
-the [temperatures example](#temperatures--nws-color-scale--stale-data-warning)
-above). v0.3.0a3 added a more direct alternative — see the next
+The two-rule + dead-zone pattern is worth knowing because the same
+"let a lower rule fill in the gap" trick generalizes (e.g.
+"unavailable warning + thresholds" in the
+[temperatures example](#temperatures--nws-color-scale--stale-data-warning)
+above). There's also a more direct alternative — see the next
 subsection.
 
-### Same effect via field-level merge (v0.3.0a3+)
+### Same effect via field-level merge
 
-The two-rule + dead-zone design above predates the **field-level
-merge** introduced in v0.3.0a3. With merging, the winning rule no
-longer "takes all" — fields a higher-priority rule doesn't address
-flow through from lower-priority rules. That unlocks a more direct
-three-rule shape: one rule per concern (color, glyph, direction),
-none of them fighting each other.
+Smart Icons' **field-level merge** offers a cleaner shape for the
+same outcome. With merging, the winning rule doesn't "take all" —
+fields a higher-priority rule doesn't address flow through from
+lower-priority rules. That unlocks a three-rule shape: one rule
+per concern (color, glyph, direction), none of them fighting each
+other.
 
 ```yaml
 rules:
