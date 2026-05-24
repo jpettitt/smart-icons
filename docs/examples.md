@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD033 -->
 # Example rules
 
 A growing collection of ready-to-paste Smart Icons rules.
@@ -16,6 +17,24 @@ The simplest useful Smart Icons rule. Color every door (or window)
 contact sensor green when closed and red when open, with matching
 glyphs. One rule covers every matching sensor on the install.
 
+<table>
+<thead>
+<tr>
+  <th>State</th>
+  <th>Icon</th>
+  <th>Glyph</th>
+  <th>Color</th>
+  <th>YAML</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>'on'</code> (open)</td>
+  <td align="center"><img src="https://api.iconify.design/mdi/door-open.svg?color=%23ff0000&width=32" alt="open door, red" /></td>
+  <td><code>mdi:door-open</code></td>
+  <td><code>#ff0000</code></td>
+  <td rowspan="2">
+
 ```yaml
 targets:
   - binary_sensor.*door_contact
@@ -26,8 +45,19 @@ mapping:
     icon: mdi:door-open
   'off':
     color: '#008000'
-    icon: mdi:door-closed-lock
+    icon: mdi:door
 ```
+
+  </td>
+</tr>
+<tr>
+  <td><code>'off'</code> (closed)</td>
+  <td align="center"><img src="https://api.iconify.design/mdi/door.svg?color=%23008000&width=32" alt="closed door, green" /></td>
+  <td><code>mdi:door</code></td>
+  <td><code>#008000</code></td>
+</tr>
+</tbody>
+</table>
 
 Three things are worth noticing in this minimal rule, because they
 recur in every example after this:
@@ -48,14 +78,32 @@ recur in every example after this:
   see the [sun-direction example below](#direction-aware-variant)
   for the same gotcha with `True` / `False`.
 
-### Same rule with a background chip (v0.3+)
+### Same rule with a background chip
 
-Same target, different visual idiom: the v0.3 `background_color`
-field paints a Mushroom-style colored circle behind the icon. With
+Same target, different visual idiom: the `background_color` field
+paints a Mushroom-style colored circle behind the icon. With
 the chip carrying the state (red = open, green = closed), the icon
 itself can stay simple — a white glyph reads at a glance against
 either fill. No icon override needed; HA's default door glyph is
 fine.
+
+<table>
+<thead>
+<tr>
+  <th>State</th>
+  <th>Chip</th>
+  <th>Glyph</th>
+  <th>Color / Background</th>
+  <th>YAML</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>'on'</code> (open)</td>
+  <td align="center"><img src="img/door-chip-on.svg" width="48" height="48" alt="open door icon (white) on a red chip" /></td>
+  <td><code>mdi:door-open</code> (HA default)</td>
+  <td><code>white</code> on <code>red</code></td>
+  <td rowspan="2">
 
 ```yaml
 targets:
@@ -70,6 +118,17 @@ mapping:
     background_color: red
 ```
 
+  </td>
+</tr>
+<tr>
+  <td><code>'off'</code> (closed)</td>
+  <td align="center"><img src="img/door-chip-off.svg" width="48" height="48" alt="closed door icon (white) on a green chip" /></td>
+  <td><code>mdi:door</code> (HA default)</td>
+  <td><code>white</code> on <code>green</code></td>
+</tr>
+</tbody>
+</table>
+
 The chip is independent of `color` and `icon` — you can set one
 field, two, or all three on each mapping entry. Any CSS color
 string works, including `rgba()` for translucent chips that let
@@ -80,7 +139,7 @@ paints just the chip and leaves the icon's natural color and glyph
 alone, which is the right shape for a "highlight" rule layered on
 top of an existing state-driven rule (the field-level merger keeps
 both effects; see the
-[sun example](#same-effect-via-field-level-merge-v030a3) for what
+[sun example](#same-effect-via-field-level-merge) for what
 that looks like in practice).
 
 ## Locks
@@ -318,8 +377,32 @@ differently across parsers; quoting removes that risk.
 You can have both — direction-aware sunrise / sunset glyphs while the
 sun is near the horizon, and elevation-banded colors the rest of the
 time — by exploiting Smart Icons' priority + no-`_else` fallthrough.
-Paste this as a whole-config block, or paste the two rules
-individually:
+
+Here's what the user ends up seeing at six representative angles:
+
+<table>
+<tr>
+  <th align="left">Angle</th>
+  <td align="center">−20°</td>
+  <td align="center">−10°</td>
+  <td align="center">−3°</td>
+  <td align="center">+3°</td>
+  <td align="center">+10°</td>
+  <td align="center">+40°</td>
+</tr>
+<tr>
+  <th align="left">Icon</th>
+  <td align="center"><picture><source srcset="img/sun-weather-night-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-light.svg" width="32" alt="weather night" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-partly-cloudy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-partly-cloudy-light.svg" width="32" alt="partly cloudy night" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="32" alt="sunset up" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="32" alt="sunset down" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-hazy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-hazy-light.svg" width="32" alt="weather hazy" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunny-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunny-light.svg" width="32" alt="sunny" /></picture></td>
+</tr>
+</table>
+
+Here's the YAML that produces those outcomes — paste it as a
+whole-config block, or paste the two rules individually:
 
 ```yaml
 rules:
@@ -339,8 +422,8 @@ rules:
     priority: 10
 
   # Elevation banding for the rest of the sky. Deliberately has
-  # *no* entry covering the -6° to +6° transition window, so the
-  # rule produces no decoration there.
+  # *no* entry covering the -6° to +6° transition window — that's
+  # the dead zone where the lower-priority direction rule fills in.
   - targets:
       - sun.sun
     source_attribute: elevation
@@ -360,6 +443,66 @@ rules:
         icon: mdi:weather-hazy
     priority: 20
 ```
+
+The detail table walks each angle through both rules — what Rule 1
+alone produces, what Rule 2 alone produces, and the final
+composite that HA actually renders:
+
+<table>
+<thead>
+<tr>
+  <th>Angle</th>
+  <th>Direction<br><sub>(rising attr)</sub></th>
+  <th>Rule 1 alone<br><sub>(rising/setting, prio 10)</sub></th>
+  <th>Rule 2 alone<br><sub>(elevation, prio 20)</sub></th>
+  <th>Final composite<br><sub>(what HA renders)</sub></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td align="center">−20°</td>
+  <td align="center">setting<br><sub><code>'False'</code></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-light.svg" width="28" alt="weather night" /></picture><br><code>mdi:weather-night</code><br><code>#0d1233</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-light.svg" width="28" alt="weather night" /></picture><br><code>mdi:weather-night</code><br><code>#0d1233</code><br><sub><em>Rule 2 wins</em></sub></td>
+</tr>
+<tr>
+  <td align="center">−10°</td>
+  <td align="center">setting<br><sub><code>'False'</code></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-partly-cloudy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-partly-cloudy-light.svg" width="28" alt="partly cloudy night" /></picture><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-partly-cloudy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-partly-cloudy-light.svg" width="28" alt="partly cloudy night" /></picture><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code><br><sub><em>Rule 2 wins</em></sub></td>
+</tr>
+<tr>
+  <td align="center">−3°</td>
+  <td align="center">rising<br><sub><code>'True'</code></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><em>no match</em><br><sub>(dead zone)</sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code><br><sub><em>Rule 1 fills in</em></sub></td>
+</tr>
+<tr>
+  <td align="center">+3°</td>
+  <td align="center">setting<br><sub><code>'False'</code></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><em>no match</em><br><sub>(dead zone)</sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code><br><sub><em>Rule 1 fills in</em></sub></td>
+</tr>
+<tr>
+  <td align="center">+10°</td>
+  <td align="center">rising<br><sub><code>'True'</code></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-hazy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-hazy-light.svg" width="28" alt="weather hazy" /></picture><br><code>mdi:weather-hazy</code><br><code>#ffd700</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-hazy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-hazy-light.svg" width="28" alt="weather hazy" /></picture><br><code>mdi:weather-hazy</code><br><code>#ffd700</code><br><sub><em>Rule 2 wins</em></sub></td>
+</tr>
+<tr>
+  <td align="center">+40°</td>
+  <td align="center">rising<br><sub><code>'True'</code></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunny-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunny-light.svg" width="28" alt="sunny" /></picture><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunny-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunny-light.svg" width="28" alt="sunny" /></picture><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code><br><sub><em>Rule 2 wins</em></sub></td>
+</tr>
+</tbody>
+</table>
 
 The mechanics are worth understanding because the same pattern
 generalizes to other "combine two views of the same entity" problems:
@@ -386,21 +529,21 @@ generalizes to other "combine two views of the same entity" problems:
   visually on the horizon. The chosen ±6° band roughly matches civil
   twilight.
 
-The two-rule + dead-zone pattern works on every Smart Icons version
-and is worth knowing because the same "let a lower rule fill in the
-gap" trick generalizes (e.g. "unavailable warning + thresholds" in
-the [temperatures example](#temperatures--nws-color-scale--stale-data-warning)
-above). v0.3.0a3 added a more direct alternative — see the next
+The two-rule + dead-zone pattern is worth knowing because the same
+"let a lower rule fill in the gap" trick generalizes (e.g.
+"unavailable warning + thresholds" in the
+[temperatures example](#temperatures--nws-color-scale--stale-data-warning)
+above). There's also a more direct alternative — see the next
 subsection.
 
-### Same effect via field-level merge (v0.3.0a3+)
+### Same effect via field-level merge
 
-The two-rule + dead-zone design above predates the **field-level
-merge** introduced in v0.3.0a3. With merging, the winning rule no
-longer "takes all" — fields a higher-priority rule doesn't address
-flow through from lower-priority rules. That unlocks a more direct
-three-rule shape: one rule per concern (color, glyph, direction),
-none of them fighting each other.
+Smart Icons' **field-level merge** offers a cleaner shape for the
+same outcome. With merging, the winning rule doesn't "take all" —
+fields a higher-priority rule doesn't address flow through from
+lower-priority rules. That unlocks a three-rule shape: one rule
+per concern (color, glyph, direction), none of them fighting each
+other.
 
 ```yaml
 rules:

@@ -1,26 +1,58 @@
 # Smart Icons
 
 Drive any Home Assistant entity's icon **color**, **glyph**, and
-**background chip** from any other entity's state — thresholds,
-mappings, or (in v0.3) Jinja templates — applied across the default
-Lovelace cards without per-card configuration.
+**background chip** from any other entity's state — via thresholds
+or mappings — applied across the default Lovelace cards without
+per-card configuration.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://hacs.xyz)
 [![Release](https://img.shields.io/github/v/release/jpettitt/smart-icons?include_prereleases&style=for-the-badge)](https://github.com/jpettitt/smart-icons/releases)
 [![License](https://img.shields.io/github/license/jpettitt/smart-icons?style=for-the-badge)](LICENSE)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
 
-> **Status:** v0.2.2 — GA. v0.3 is in progress on `feature/icon-bg-circle`:
-> per-rule Mushroom-style background chip + field-level rule merging.
-> See [CHANGELOG.md](CHANGELOG.md) for the v0.3.0a3 entry. The
-> contrasting-outline approach explored earlier in the v0.3 cycle was
-> abandoned ([rationale](docs/icon-outline-prototype-results.md)) when
-> the chip approach proved cleaner.
->
-> Template-mode evaluation, originally on the v0.3 roadmap, has been
-> demoted to demand-driven — rule stacking (priority + selective
-> matching, see [`docs/examples.md`](docs/examples.md)) already covers
-> the use cases template mode was meant for.
+> **Status:** v0.3.0a3 alpha — adds per-rule Mushroom-style
+> background chip + field-level rule merging on top of the v0.2.2
+> GA. See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
+> The contrasting-outline approach explored earlier in the v0.3
+> cycle was abandoned
+> ([rationale](docs/icon-outline-prototype-results.md)) when the
+> chip approach proved cleaner. Template mode was inert through
+> v0.2 / v0.3 alpha and removed in v0.3.0a3; rule stacking covers
+> the use cases template mode was originally for
+> (see [`docs/examples.md`](docs/examples.md)).
+
+## See it in action
+
+One real example — `sun.sun`'s icon, driven by elevation and
+direction. Two rules stack: an elevation-thresholds rule with a
+±6° dead zone, and a lower-priority rising/setting mapping that
+fills the dead zone in. The user just sees these glyphs at the
+matching sun angles:
+
+<table>
+<tr>
+  <th align="left">Angle</th>
+  <td align="center">−20°</td>
+  <td align="center">−10°</td>
+  <td align="center">−3°</td>
+  <td align="center">+3°</td>
+  <td align="center">+10°</td>
+  <td align="center">+40°</td>
+</tr>
+<tr>
+  <th align="left">Icon</th>
+  <td align="center"><picture><source srcset="docs/img/sun-weather-night-dark.svg" media="(prefers-color-scheme: dark)"><img src="docs/img/sun-weather-night-light.svg" width="32" alt="weather night" /></picture></td>
+  <td align="center"><picture><source srcset="docs/img/sun-weather-night-partly-cloudy-dark.svg" media="(prefers-color-scheme: dark)"><img src="docs/img/sun-weather-night-partly-cloudy-light.svg" width="32" alt="partly cloudy night" /></picture></td>
+  <td align="center"><picture><source srcset="docs/img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="docs/img/sun-weather-sunset-up-light.svg" width="32" alt="sunset up" /></picture></td>
+  <td align="center"><picture><source srcset="docs/img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="docs/img/sun-weather-sunset-down-light.svg" width="32" alt="sunset down" /></picture></td>
+  <td align="center"><picture><source srcset="docs/img/sun-weather-hazy-dark.svg" media="(prefers-color-scheme: dark)"><img src="docs/img/sun-weather-hazy-light.svg" width="32" alt="weather hazy" /></picture></td>
+  <td align="center"><picture><source srcset="docs/img/sun-weather-sunny-dark.svg" media="(prefers-color-scheme: dark)"><img src="docs/img/sun-weather-sunny-light.svg" width="32" alt="sunny" /></picture></td>
+</tr>
+</table>
+
+See [`docs/examples.md`](docs/examples.md#direction-aware-and-elevation-banded--two-rules-one-outcome)
+for the YAML, the per-rule contribution table, and other ready-to-paste
+patterns (doors, locks, temperature-banding, background chips).
 
 ## What problem does it solve?
 
@@ -123,8 +155,8 @@ Each rule has:
   reacts to its own state.
 - **Source attribute** — read an attribute instead of the entity's main
   state (e.g. `azimuth` on `sun.sun`).
-- **Mode** — `mapping` (exact state → decoration), `thresholds`
-  (numeric ranges), or `template` (storage only in v0.2, runtime in v0.3).
+- **Mode** — `mapping` (exact state → decoration) or `thresholds`
+  (numeric ranges).
 - **Priority** — when several rules target the same entity, fields
   are merged in priority order. The highest-priority enabled rule
   that addresses a given field (color, icon, or background) wins
@@ -195,9 +227,6 @@ natural color alone.
   Door 1 (entity settings dialog injection); translations framework.
 - **v0.4+** — Drag-reorder priority in the panel, import/export,
   icon-pack picker, optional opacity decoration.
-- **Demand-driven** — Template-mode evaluation. Parked unless real
-  users ask for it — rule stacking already covers the common
-  template-mode use cases (see [`docs/examples.md`](docs/examples.md)).
 
 Full backlog: [TODO.md](TODO.md) and [DESIGN.md § 11](DESIGN.md#11-roadmap).
 
