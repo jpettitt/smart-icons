@@ -120,8 +120,18 @@ Open items, in roughly priority order:
 - [ ] Investigate color-update latency on rule edit (~1 s observed
   2026-05-19; icon updates are instant because they ride HA's native
   state-changed path, color goes through the frontend painter).
-
-## Followups & ideas (parking lot)
+- [x] **`<picture>` rendering in HACS Information tab** (shipped
+  post-v0.3.0). HACS's markdown renderer doesn't process
+  `<picture>` / `<source>` and shows the raw HTML as text,
+  breaking the README's "See it in action" preview for users
+  landing via HACS. Resolved by adding a lighter-weight `info.md`
+  alongside `README.md` (HACS picks up `info.md` when
+  `hacs.json`'s `render_readme` is `false`). The `info.md` uses
+  pipe-table markdown + absolute `raw.githubusercontent.com`
+  image URLs to the `-dark.svg` icon variants, which render in
+  HACS and remain legible in either HA theme. README continues to
+  use the `<picture>` + `prefers-color-scheme` setup for
+  github.com viewers.
 
 - **Template mode — removed entirely in v0.3.0a3.** Template mode
   was originally on the v0.3 roadmap, then demoted to demand-driven
