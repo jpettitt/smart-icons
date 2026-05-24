@@ -377,8 +377,29 @@ differently across parsers; quoting removes that risk.
 You can have both — direction-aware sunrise / sunset glyphs while the
 sun is near the horizon, and elevation-banded colors the rest of the
 time — by exploiting Smart Icons' priority + no-`_else` fallthrough.
-Paste this as a whole-config block, or paste the two rules
-individually:
+The table walks six representative angles through both rules and
+shows what the user ends up seeing; paste the YAML in the right-hand
+column as a whole-config block, or paste the two rules individually.
+
+<table>
+<thead>
+<tr>
+  <th>Angle</th>
+  <th>Direction<br><sub>(rising attr)</sub></th>
+  <th>Rule 1 alone<br><sub>(rising/setting, prio 10)</sub></th>
+  <th>Rule 2 alone<br><sub>(elevation, prio 20)</sub></th>
+  <th>Final composite<br><sub>(what HA renders)</sub></th>
+  <th>YAML</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td align="center">−20°</td>
+  <td align="center">setting<br><sub><code>'False'</code></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%230d1233&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#0d1233</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%230d1233&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#0d1233</code><br><sub><em>Rule 2 wins</em></sub></td>
+  <td rowspan="6">
 
 ```yaml
 rules:
@@ -419,6 +440,46 @@ rules:
         icon: mdi:weather-hazy
     priority: 20
 ```
+
+  </td>
+</tr>
+<tr>
+  <td align="center">−10°</td>
+  <td align="center">setting<br><sub><code>'False'</code></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night-partly-cloudy.svg?color=%231a1f4a&width=28" alt="partly cloudy night" /><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night-partly-cloudy.svg?color=%231a1f4a&width=28" alt="partly cloudy night" /><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code><br><sub><em>Rule 2 wins</em></sub></td>
+</tr>
+<tr>
+  <td align="center">−3°</td>
+  <td align="center">rising<br><sub><code>'True'</code></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><em>no match</em><br><sub>(dead zone)</sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code><br><sub><em>Rule 1 fills in</em></sub></td>
+</tr>
+<tr>
+  <td align="center">+3°</td>
+  <td align="center">setting<br><sub><code>'False'</code></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><em>no match</em><br><sub>(dead zone)</sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code><br><sub><em>Rule 1 fills in</em></sub></td>
+</tr>
+<tr>
+  <td align="center">+10°</td>
+  <td align="center">rising<br><sub><code>'True'</code></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-hazy.svg?color=%23ffd700&width=28" alt="weather hazy" /><br><code>mdi:weather-hazy</code><br><code>#ffd700</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-hazy.svg?color=%23ffd700&width=28" alt="weather hazy" /><br><code>mdi:weather-hazy</code><br><code>#ffd700</code><br><sub><em>Rule 2 wins</em></sub></td>
+</tr>
+<tr>
+  <td align="center">+40°</td>
+  <td align="center">rising<br><sub><code>'True'</code></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunny.svg?color=%23ffeb3b&width=28" alt="sunny" /><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunny.svg?color=%23ffeb3b&width=28" alt="sunny" /><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code><br><sub><em>Rule 2 wins</em></sub></td>
+</tr>
+</tbody>
+</table>
 
 The mechanics are worth understanding because the same pattern
 generalizes to other "combine two views of the same entity" problems:
