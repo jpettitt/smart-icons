@@ -401,35 +401,13 @@ Here's what the user ends up seeing at six representative angles:
 </tr>
 </table>
 
-The detail table below shows how each rule contributes and how the
-priorities interact to produce that result; paste the YAML in the
-right-hand column as a whole-config block, or paste the two rules
-individually.
-
-<table>
-<thead>
-<tr>
-  <th>Angle</th>
-  <th>Direction<br><sub>(rising attr)</sub></th>
-  <th>Rule 1 alone<br><sub>(rising/setting, prio 10)</sub></th>
-  <th>Rule 2 alone<br><sub>(elevation, prio 20)</sub></th>
-  <th>Final composite<br><sub>(what HA renders)</sub></th>
-  <th>YAML</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td align="center">−20°</td>
-  <td align="center">setting<br><sub><code>'False'</code></sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code><br><sub><em>Rule 2 wins</em></sub></td>
-  <td rowspan="6">
+Here's the YAML that produces those outcomes — paste it as a
+whole-config block, or paste the two rules individually:
 
 ```yaml
 rules:
-  # Direction mapping — `rising` is binary
-  # (True / False), so no _else needed.
+  # Direction-aware mapping. Always matches because `rising` is
+  # always True or False — no _else needed.
   - targets:
       - sun.sun
     source_attribute: rising
@@ -443,10 +421,9 @@ rules:
         icon: mdi:weather-sunset-down
     priority: 10
 
-  # Elevation banding. No entry covers
-  # the -6° to +6° band, so the rule
-  # produces nothing there — the dead
-  # zone where Rule 1 fills in.
+  # Elevation banding for the rest of the sky. Deliberately has
+  # *no* entry covering the -6° to +6° transition window — that's
+  # the dead zone where the lower-priority direction rule fills in.
   - targets:
       - sun.sun
     source_attribute: elevation
@@ -467,7 +444,27 @@ rules:
     priority: 20
 ```
 
-  </td>
+The detail table walks each angle through both rules — what Rule 1
+alone produces, what Rule 2 alone produces, and the final
+composite that HA actually renders:
+
+<table>
+<thead>
+<tr>
+  <th>Angle</th>
+  <th>Direction<br><sub>(rising attr)</sub></th>
+  <th>Rule 1 alone<br><sub>(rising/setting, prio 10)</sub></th>
+  <th>Rule 2 alone<br><sub>(elevation, prio 20)</sub></th>
+  <th>Final composite<br><sub>(what HA renders)</sub></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td align="center">−20°</td>
+  <td align="center">setting<br><sub><code>'False'</code></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code><br><sub><em>Rule 2 wins</em></sub></td>
 </tr>
 <tr>
   <td align="center">−10°</td>
