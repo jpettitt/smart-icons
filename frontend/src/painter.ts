@@ -42,18 +42,50 @@
 
 import { applyDecoration, releaseDecoration } from './outline';
 import type { StateWatcher } from './state-watcher';
-import { SMART_ICONS_COLOR_ATTR } from './types';
+import { SMART_ICONS_BACKGROUND_ATTR, SMART_ICONS_COLOR_ATTR } from './types';
 
 /** Marker (Symbol so it can't collide with HA-internal property names)
  *  recorded on the class once we've wrapped its `stateObj` setter.
  *  Re-applying is then a safe no-op. */
 const PATCH_MARKER = Symbol.for('smart-icons:patched-ha-state-icon');
 
+const DATA_OWNED_PROP = 'smartIconsOwned';
+
 export interface PatchResult {
   ok: boolean;
   /** Why we couldn't patch, when `ok: false`. Used for the
    *  diagnostic console warning. */
   reason?: string;
+}
+
+/** Single source of truth for the "given the resolved color + bg
+ *  strings, what do we do with the host?" decision. Used by both the
+ *  ha-state-icon setter patch (primary path) and the DOM-crawler
+ *  Painter (fallback path) so they can't drift on the gating
+ *  condition. A rule may set color only, bg only, or both — any
+ *  non-empty value triggers paint; both empty + a prior ownership
+ *  marker triggers release; both empty + no marker is a no-op. */
+function decideAndPaint(
+  host: HTMLElement,
+  color: string,
+  bg: string,
+): void {
+  if (color || bg) {
+    applyDecoration(host, color, bg || null);
+  } else if (host.dataset[DATA_OWNED_PROP]) {
+    releaseDecoration(host);
+  }
+}
+
+/** Read a string-typed attribute from a stateObj-shaped object,
+ *  coercing non-strings to ''. Centralizes the typeof guard so the
+ *  setter patch and crawler paths share a definition. */
+function readStringAttr(
+  attrs: Record<string, unknown> | undefined,
+  name: string,
+): string {
+  const raw = attrs?.[name];
+  return typeof raw === 'string' ? raw : '';
 }
 
 /** Pure form of the patch — takes a class to patch directly so unit
@@ -99,15 +131,11 @@ export function applyStateObjPatch(
       // Call HA's setter first so Lit's reactive bookkeeping runs
       // normally (requestUpdate, internal slot writes, etc).
       origSet.call(this, v);
-      const raw = v?.attributes?.[SMART_ICONS_COLOR_ATTR];
-      const color = typeof raw === 'string' ? raw : '';
-      if (color) {
-        // applyDecoration sets style.color, marks dataset.smartIconsOwned,
-        // and (when the outline option is enabled) adds the SVG stroke.
-        applyDecoration(this, color);
-      } else if (this.dataset.smartIconsOwned) {
-        releaseDecoration(this);
-      }
+      decideAndPaint(
+        this,
+        readStringAttr(v?.attributes, SMART_ICONS_COLOR_ATTR),
+        readStringAttr(v?.attributes, SMART_ICONS_BACKGROUND_ATTR),
+      );
     },
   });
   (klass as unknown as Record<symbol, unknown>)[PATCH_MARKER] = true;
@@ -140,7 +168,6 @@ interface IconHostWithStateObj extends HTMLElement {
   };
 }
 
-const DATA_OWNED = 'smartIconsOwned';
 const CATCHUP_SCAN_DELAYS_MS = [100, 500, 2000] as const;
 
 export class Painter {
@@ -263,22 +290,22 @@ export class Painter {
     // tracks the connection-layer truth synchronously, so we don't
     // race Lit's stateObj rebind. Fall back to the resolved stateObj
     // for tests that construct a bare Painter() without a watcher.
-    const color = (this.watcher
-      ? this.watcher.getAttribute(entityId, SMART_ICONS_COLOR_ATTR)
-      : stateObj?.attributes?.[SMART_ICONS_COLOR_ATTR]) as
-      | string
-      | null
-      | undefined;
-
-    if (color != null && color !== '') {
-      applyDecoration(host, color);
-    } else if (host.dataset[DATA_OWNED]) {
-      this.release(host);
-    }
+    const readAttr = (name: string): string => {
+      if (this.watcher) {
+        const v = this.watcher.getAttribute(entityId, name);
+        return typeof v === 'string' ? v : '';
+      }
+      return readStringAttr(stateObj?.attributes, name);
+    };
+    decideAndPaint(
+      host,
+      readAttr(SMART_ICONS_COLOR_ATTR),
+      readAttr(SMART_ICONS_BACKGROUND_ATTR),
+    );
   }
 
   private release(host: IconHostWithStateObj): void {
-    if (!host.dataset[DATA_OWNED]) return;
+    if (!host.dataset[DATA_OWNED_PROP]) return;
     releaseDecoration(host);
   }
 

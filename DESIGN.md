@@ -1,14 +1,18 @@
 # smart-icons — Design Document
 
-> **Status:** v0.2.2 shipped. v0.3 work in progress: contrasting
-> auto-luminance outline on painted icons + installation-wide admin
-> toggle (see § 11 and
-> [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md));
-> template-mode evaluation, originally on the v0.3 roadmap, has been
-> demoted to demand-driven. This document mixes design intent with
-> as-built notes — § 11 (Roadmap) tracks what's actually done.
+> **Status:** v0.2.2 shipped. v0.3 work in progress on
+> `feature/icon-bg-circle`: per-rule Mushroom-style background chip,
+> field-level rule merging, and the editor/YAML migration to
+> `ha-code-editor`. The contrasting-outline approach explored
+> earlier in the v0.3 cycle was retired (see
+> [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md))
+> and **template mode was removed entirely** in v0.3.0a3 after
+> two minor versions as inert storage-only code. This document
+> mixes design intent with as-built notes — § 11 (Roadmap) tracks
+> what's actually done.
 >
-> Last substantive revision 2026-05-23 (v0.3 outline architecture).
+> Last substantive revision 2026-05-24 (v0.3.0a3: template-mode
+> removal, ha-code-editor migration, glob-target caching).
 
 ## 1. Motivation
 
@@ -29,20 +33,24 @@ everywhere that entity is rendered.
 
 The same mechanism also handles **icon glyph swapping** — change
 `mdi:home` to `mdi:home-alert` when an alarm trips, or pick a different
-weather glyph per condition — using the same rule modes (thresholds,
-mapping, template). Color and glyph are independent properties of a single
-"decoration" rule; either or both can be set.
+weather glyph per condition — using the same rule modes (thresholds and
+mapping). And in v0.3+ a **background chip** — a Mushroom-style colored
+circle rendered behind the icon — can be set per rule, layered on top
+of or independently of color and glyph. Color, glyph, and background
+are independent fields of a single "decoration"; any subset may be set.
 
 ## 2. Goals & non-goals
 
 ### Goals
 
-- Drive any entity's displayed icon **color** from any other entity's state.
-- Drive any entity's icon **glyph** (the `mdi:…` graphic itself) from any
-  other entity's state — using the same rule modes as color.
+- Drive any entity's displayed icon **color**, **glyph**, and
+  **background chip** from any other entity's state.
 - Work on the **default** Lovelace cards without per-card config.
-- Support three rule modes: thresholds, value→decoration mapping, Jinja
-  templates. A "decoration" is any combination of color + glyph.
+- Support two rule modes: thresholds (numeric ranges) and mapping
+  (exact state → decoration). Jinja-template mode was prototyped in
+  v0.2 / v0.3 alpha but removed in v0.3.0a3 — see § 11 and the
+  [`docs/examples.md`](docs/examples.md) rule-stacking patterns for
+  what replaces it.
 - One-click install via the Integrations panel (no manual resource wiring).
 - Persist rules in HA's normal storage so they survive restarts and ride
   along in backups.
@@ -114,10 +122,11 @@ only the panel bundle talks to `smart_icons/*` WS commands.
 
 ### 4.1 Schema (storage form)
 
-A rule produces a **decoration** — `{ color?, icon? }` — for its `target`
-entity. Either field is optional; you can color without changing the glyph,
-swap the glyph without changing color, or do both. The same three modes
-(thresholds / mapping / template) cover both axes.
+A rule produces a **decoration** —
+`{ color?, icon?, background_color? }` — for its `target` entity. All
+three fields are optional; you can color without changing the glyph,
+swap the glyph without touching color, paint just a background chip,
+or any combination. Two modes (thresholds, mapping) cover both axes.
 
 ```jsonc
 {
@@ -126,28 +135,27 @@ swap the glyph without changing color, or do both. The same three modes
   "source": "sensor.kitchen_temp", // entity driving the decoration (default: target)
   "source_attribute": null,        // optional attribute on `source`; e.g. "azimuth"
                                     //   to drive off `sun.sun.azimuth` instead of state
-  "mode": "thresholds",            // "thresholds" | "mapping" | "template"
+  "mode": "thresholds",            // "thresholds" | "mapping"
 
-  // mode=thresholds — evaluated in order, first match wins; final entry with
-  // no comparator is the "else" branch. Each entry may set color, icon, or both.
+  // mode=thresholds — evaluated in order, first match wins; final entry
+  // with no comparator is the "else" branch. Each entry may set color,
+  // icon, background_color, or any combination.
   "thresholds": [
     { "lt": 18, "color": "#3366ff", "icon": "mdi:snowflake" },
     { "lt": 25, "color": "#33cc66" },
-    { "color": "#ff3333", "icon": "mdi:fire" }
+    { "color": "#ff3333", "icon": "mdi:fire", "background_color": "#400" }
   ],
 
   // mode=mapping — exact string match on source.state; values are decorations.
   "mapping": {
     "movie":  { "color": "#000000", "icon": "mdi:movie-open" },
     "party":  { "color": "#ff00ff", "icon": "mdi:party-popper" },
+    "alert":  { "background_color": "rgba(255,0,0,0.5)" }, // bg-only is legal
     "_else":  { "color": "#888888" }
   },
 
-  // mode=template — Jinja, evaluated server-side. May return either a plain
-  // color string (back-compat / shorthand) or a JSON object
-  // {"color": "...", "icon": "..."}. Literal "inherit" / "unset" / "" /
-  // null releases the icon back to defaults.
-  "template": "{{ {'color':'#ff0000','icon':'mdi:home-alert'} if is_state('alarm.house','triggered') else 'inherit' }}",
+  // (template mode was prototyped in v0.2 / v0.3 alpha and removed in
+  // v0.3.0a3 — see § 11 and CHANGELOG.md for the rationale.)
 
   "enabled": true,
   "priority": 10,                  // tiebreaker when multiple rules hit the same target
@@ -157,45 +165,76 @@ swap the glyph without changing color, or do both. The same three modes
 }
 ```
 
-### 4.2 Evaluation semantics
+### 4.2 Decorations and the priority merge
 
-- A rule yields a `{ color?, icon? }` decoration or `null`.
-- `color` and `icon` are **independent** — a rule can set just one, just the
-  other, or both. Unset fields fall through to HA's defaults (color) or to
-  the entity's own configured icon (glyph).
-- One rule per `(target, priority)` slot. Multiple rules for the same target
-  are allowed but only the highest-priority **enabled** one with a non-null
-  evaluation result applies. This lets users layer overrides (alarm > normal).
-  When the winning rule sets only `color`, the glyph is **not** affected by
-  lower-priority rules — winner takes all, by design, to keep mental model
-  simple.
-- Color values: any CSS color string (`#rgb`, `#rrggbb`, `rgb(...)`,
-  `rgba(...)`, `hsl(...)`, named colors, or a CSS variable `var(--my-var)`).
+- A rule yields a `{ color?, icon?, background_color? }` decoration or `null`.
+- All three fields are **independent** — a rule can set any subset.
+  `background_color` (v0.3+) is the Mushroom-style colored circle
+  rendered behind the icon; `color` is the icon's foreground; `icon`
+  is the glyph itself. Unset fields fall through to HA's defaults.
+- Color / background_color values: any CSS color string (`#rgb`,
+  `#rrggbb`, `rgb(...)`, `rgba(...)`, `hsl(...)`, named colors, or a
+  CSS variable `var(--my-var)`). `rgba()` produces translucent chips.
 - Icon values: any string `<ha-icon>` can resolve — typically `mdi:foo`,
   `hass:foo`, or a custom-pack prefix the user has installed.
-- The literal `"inherit"`, `"unset"`, `""`, or `null` (in a color or icon
-  field, or as a whole decoration) means *release this property* — back to
-  HA defaults.
+- The literal `"inherit"`, `"unset"`, `""`, or `null` in any decoration
+  field means *release this property* — back to HA defaults. See the
+  merge semantics below for what "release" does across multiple rules.
 - Threshold comparators: `lt`, `lte`, `gt`, `gte`, `eq`. Numeric coercion on
   source state; if coercion fails the rule yields null (released).
 - Mapping: `_else` is the fallback bucket. Missing key + no `_else` → null.
-- Template: evaluated server-side via existing `render_template` machinery;
-  cached, re-rendered on dependency change (HA already tracks template deps).
+
+**Field-level priority merging (v0.3+).** When multiple rules target
+the same entity, the injector merges their decorations field-by-field
+rather than picking a single winner. The highest-priority rule that
+takes a *position* on a given field (color / icon / background_color)
+wins that field; lower-priority rules fill in fields no higher-priority
+rule addressed. Equal priorities resolve in declaration order.
+
+Two kinds of position:
+
+- *Positive*: a non-empty string value the painter should apply.
+- *Release*: an explicit `null` / `""` / `"inherit"` / `"unset"`
+  sentinel. The rule is saying "this field should be cleared
+  regardless of what lower-priority rules contribute," and lower-
+  priority rules are blocked from filling it in.
+
+Absence of a field on a rule means "no opinion" — lower-priority rules
+flow through unmodified. This distinguishes "I have no opinion on the
+icon" (let a lower rule's glyph through) from "I want this cleared"
+(block lower rules entirely).
+
+Example: a high-priority chip-only rule (`background_color: gray`)
+layered on a low-priority color-by-state rule produces the chip AND
+the colored icon. The v0.2 line treated this as "highest-priority
+rule wins entirely" and dropped the color — that semantic is gone.
+
+Implementation: `evaluator.merge_decorations` (Python) /
+`mergeDecorations` (TypeScript). Both return the dense
+`{ color, icon, background_color }` shape with `null` in unaddressed
+or explicitly-released slots; the injector treats both equivalently
+(pop the attribute if it's not in the merged result).
 
 ### 4.3 Validation (server-side)
 
 - `target` must be a known entity_id format; not required to exist yet
   (allow forward declaration).
 - `source` likewise; default = `target`.
-- Mode-specific shape checked with voluptuous schemas.
-- Color strings validated by a relaxed regex (we don't try to be a CSS parser
-  — anything the browser would accept passes).
+- Mode-specific shape checked with voluptuous schemas (PREVENT_EXTRA
+  on the decoration schema; ALLOW_EXTRA at the top level so unknown
+  forward-compat keys can round-trip without blocking load).
+- Color / background_color strings validated by a relaxed regex (we
+  don't try to be a CSS parser — anything the browser would accept
+  passes).
 - Icon strings validated against a `prefix:name` shape; we don't try to
   verify the icon actually exists in any installed pack (the renderer will
   fall back to a placeholder if it's missing, which is the right UX).
-- Reject template strings exceeding a sensible length (4 KB).
-- At least one of `color` / `icon` must be set in any non-empty decoration;
-  an empty `{}` is treated as `null` (released).
+- `mode` must be `thresholds` or `mapping`. Legacy `mode: template`
+  rules in storage fail validation on load and are silently dropped
+  by the store's per-rule `vol.Invalid` catch — see CHANGELOG.md
+  v0.3.0a3.
+- A non-empty decoration must set at least one of `color`, `icon`, or
+  `background_color`; an empty `{}` is treated as `null` (released).
 
 ## 5. Configuration UX
 
@@ -435,11 +474,16 @@ The benefits this unlocked:
 What we accept in exchange:
 
 - The Python evaluator must stay in sync with the TS evaluator. Both
-  test suites cover the same semantics ([§ 4.2](#42-evaluation-semantics))
-  to make a divergence loud.
-- Releasing a rule cleans up `smart_icons_color` but leaves the last
-  injected `icon` on the target's state until the owning integration
-  pushes its own update. Documented; acceptable in v0.1.
+  test suites cover the same semantics
+  ([§ 4.2](#42-decorations-and-the-priority-merge)) to make a
+  divergence loud.
+- Releasing a rule cleans up `smart_icons_color`,
+  `smart_icons_background`, and the `icon` attribute. The icon
+  attribute pop is guarded: we only clear it when the current value
+  still matches what we last wrote, so a source integration that
+  republished its own icon between our write and our clear is left
+  alone (`_injected_icons` bookkeeping in
+  [`injector.py`](custom_components/smart_icons/injector.py)).
 - Calling `hass.states.async_set` fires `state_changed`. Automations
   triggered on transitions are unaffected, but ones triggered on raw
   events would see the synthetic update.
@@ -551,8 +595,16 @@ Rules:
   events. v0.1 takes the simplicity over narrowing to per-entity
   subscriptions; if a future profile shows the broadcast handler as
   hot, narrow then.
-- Server-side template evaluation (v0.2) will reuse HA's existing
-  template engine, cached and re-fired only on dependency change.
+- **Glob-target resolution is cached per rule** in the injector
+  (v0.3.0a3). Without the cache, every relevant state change ran
+  `fnmatch.filter` over `hass.states.async_entity_ids()` for each
+  glob rule — `O(rules × globs × entities)` per state change on
+  large installs (5k+ entities, many glob rules). Cache invalidation
+  is surgical: rule changes drop just the affected rule's entry,
+  entity-registry events and new-entity-appearance events drop the
+  cache for every rule that uses a glob (literal-only rules keep
+  their cache). See `IconInjector._resolved_cache` /
+  `_invalidate_glob_rules` in `injector.py`.
 
 ### 7.5 Theme & dark-mode interaction
 
@@ -687,9 +739,10 @@ All commands under the `smart_icons/` namespace, registered via
 `websocket_api.async_register_command`. Schemas validated with voluptuous.
 **Rule-management commands are admin-gated** via
 `@websocket_api.require_admin`; a non-admin user gets an `unauthorized`
-error from each. The painter bundle does not call the rule-management
-WS API — it reads `smart_icons_color` from each entity's state
-attributes directly — so non-admin dashboards still render correctly.
+error from each. The painter bundle does not call the WS API — it
+reads `smart_icons_color` and `smart_icons_background` from each
+entity's state attributes directly — so non-admin dashboards still
+render correctly.
 
 | Type | Admin | Purpose | Payload | Response |
 | --- | --- | --- | --- | --- |
@@ -699,18 +752,17 @@ attributes directly — so non-admin dashboards still render correctly.
 | `smart_icons/replace_all` | yes | atomic whole-config replace | `{ rules: Rule[] }` | `{ count: N }` |
 | `smart_icons/subscribe` | yes | push updates | — | stream of `{ type: "added"\|"updated"\|"removed", rule, id }` |
 | `smart_icons/version` | yes | compat info | — | `{ integration, ha_version, schema_version }` |
-| `smart_icons/get_options` | **no** | installation-wide options snapshot | — | `{ options: { outline_enabled: bool, ... } }` |
-| `smart_icons/update_options` | yes | merge into installation options | `{ options: { ... } }` | `{ options: <merged> }` |
 
-`get_options` is intentionally **not** admin-gated — the painter bundle
-runs for every authenticated user and needs to read `outline_enabled`
-at bootstrap. Its return surface exposes no admin-sensitive data
-(small set of rendering preferences). Changes to options trigger an
-HA bus event `smart_icons_options_updated` so painters running for
-non-admin users learn about admin toggles without polling.
+(The `smart_icons/render_template` command tentatively reserved in
+the v0.2 docs was never implemented; template-mode evaluation was
+removed entirely in v0.3.0a3 — see § 11.)
 
-Template-mode evaluation (originally tagged for a `smart_icons/render_template`
-command in v0.3) has been demoted to demand-driven — see TODO.md.
+> **History:** v0.3.0a1 / a2 also exposed `smart_icons/get_options`
+> (non-admin) and `smart_icons/update_options` (admin) for the
+> installation-wide `outline_enabled` toggle, plus a
+> `smart_icons_options_updated` bus event. All of that was removed
+> in v0.3.0a3 when the outline approach was abandoned in favor of
+> the per-rule `background_color` chip.
 
 ## 9. Component breakdown
 
@@ -721,11 +773,11 @@ command in v0.3) has been demoted to demand-driven — see TODO.md.
 | `__init__.py` | `async_setup_entry`, wires Store + injector + WS + frontend; idempotent setup |
 | `manifest.json` | `domain`, `name`, `version`, `dependencies: ["frontend","websocket_api"]`, `iot_class: "calculated"`, `integration_type: "service"` |
 | `config_flow.py` | Minimal single-step flow; just "Add" — no inputs needed |
-| `const.py` | Constants — `DOMAIN`, storage keys, `ATTR_ICON`, `ATTR_SMART_ICONS_COLOR`, defaults |
+| `const.py` | Constants — `DOMAIN`, storage keys, `ATTR_ICON`, `ATTR_SMART_ICONS_COLOR`, `ATTR_SMART_ICONS_BACKGROUND` |
 | `store.py` | `RuleStore` wrapping `Store`; cache, subscribers, migrations |
 | `rule.py` | `@dataclass(slots=True)` Rule type + validation helpers |
-| `evaluator.py` | Pure rule evaluation — `evaluate_thresholds`, `evaluate_mapping`, `evaluate_rule`, `pick_winner`. Mirrors `frontend/src/evaluator.ts` ([§ 7.0](#70-architecture--server-side-glyph-client-side-color)). |
-| `injector.py` | `IconInjector` — subscribes to source-entity `state_changed`, evaluates rules, writes `attributes.icon` + `attributes.smart_icons_color` to target via `hass.states.async_set`. |
+| `evaluator.py` | Pure rule evaluation — `evaluate_thresholds`, `evaluate_mapping`, `evaluate_rule`, `merge_decorations` (field-level priority merge; v0.3 replaces v0.2's `pick_winner`, kept as alias). Mirrors `frontend/src/evaluator.ts` ([§ 7.0](#70-architecture--server-side-glyph-client-side-color)). |
+| `injector.py` | `IconInjector` — subscribes to source-entity `state_changed`, evaluates rules, writes `attributes.icon` + `attributes.smart_icons_color` + `attributes.smart_icons_background` to target via `hass.states.async_set`. Tracks last-written icon per target so rule edits/deletes can clear the attribute without clobbering source-set values. |
 | `websocket_api.py` | Five command handlers, voluptuous schemas |
 | `frontend.py` | `async_register_static_paths` + `add_extra_js_url`; serves the bundled JS at `/smart_icons_static/smart_icons.js` |
 
@@ -821,7 +873,6 @@ smart-icons/
 | Other plugins fight us for `style.color` | Medium | Politeness rule (§ 7.3); document interop with card-mod & button-card |
 | Themes set `--state-icon-color` and users expect themes to win | Low | Document the precedence; offer `var(--…)` color values as escape hatch |
 | Cards that bypass `ha-state-icon` (mini-graph, etc.) | Certain | Out of scope; explicitly named in README |
-| Template DoS via expensive Jinja | Low | Reuse HA's existing template throttling; cap template length |
 | Rule store corruption | Low | `Store` is atomic; backups cover us; provide an import-from-YAML recovery path |
 | Storage growth (someone makes 10k rules) | Low | Soft warning at 500 rules in the panel; no hard limit |
 
@@ -838,8 +889,9 @@ smart-icons/
 - [x] **Server-side icon injection** ([§ 7.0](#70-architecture--server-side-glyph-client-side-color))
   — evaluator + injector run in Python; glyph swap rides HA's native
   `attributes.icon` mechanism. Frontend painter is color-only.
-- [x] Modes: `thresholds`, `mapping` (template accepted at storage
-  layer; runtime evaluation deferred to v0.3).
+- [x] Modes: `thresholds`, `mapping`. (`template` mode was originally
+  accepted at the storage layer with runtime evaluation deferred;
+  removed entirely in v0.3.0a3 — see CHANGELOG.)
 - [x] Auto-register frontend resource on setup.
 - [x] Initial-paint polish: `localStorage` rule cache for the panel UI's
   synchronous hydration before the WS round trip.
@@ -894,30 +946,43 @@ smart-icons/
   landed in a single commit because the per-rule toggle and the
   whole-config toggle share most of their wiring.
 
-### v0.3 — contrasting outline + Door 1
+### v0.3 — background chips + Door 1
 
-- [ ] **Contrasting outline on painted icons** — black-or-white outline
-  auto-picked from the painted color's W3C relative luminance,
-  rendered as native SVG `paint-order: stroke fill` on the inner glyph
-  path. Installation-wide admin toggle stored in `smart_icons.rules`
-  options + delivered to the painter via the `smart_icons_options_updated`
-  bus event. Scope: only Smart-Icons-painted icons; HA's
-  default-colored icons stay untouched. See
+- [x] **Mushroom-style background chip per rule** (shipped in
+  v0.3.0a3). Each mapping / threshold entry gains an optional
+  `background_color` field; when set, the painter renders a colored
+  circle behind the icon via host CSS (`background-color`,
+  `border-radius: 50%`, `box-shadow: 0 0 0 5px <color>`). Accepts
+  any CSS color string including `rgba()` for translucent chips.
+  Replaces the contrasting-outline approach explored earlier in the
+  v0.3 cycle — see
   [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md)
-  for the four variants tested and the rejected alternatives.
+  for the rejected variants. The installation-wide outline toggle
+  (`outline_enabled` storage field, `smart_icons/get_options` /
+  `smart_icons/update_options` WS commands, `smart_icons_options_updated`
+  bus event) shipped briefly in v0.3.0a1/a2 and was removed
+  together with the outline approach.
+- [x] **Field-level priority merging** (shipped in v0.3.0a3) —
+  replaces v0.2's "winner takes all" semantic so a chip-only rule
+  can layer on a color-by-state rule without erasing it.
+  Implementation: `merge_decorations` / `mergeDecorations`. See
+  [§ 4.2](#42-decorations-and-the-priority-merge).
+- [x] **YAML editing on `ha-code-editor`** (shipped in v0.3.0a3) —
+  the per-rule YAML view inside the rule editor and the whole-config
+  YAML view in the panel both switched from bare `<textarea>` to
+  HA's `ha-code-editor mode="yaml"` (CodeMirror 6). Brings syntax
+  highlighting, search, entity/icon completion, and Ctrl+S save.
+- [x] **Glob-target resolution cache** in the injector (shipped in
+  v0.3.0a3) — see [§ 7.4](#74-performance) for the
+  `_resolved_cache` design + invalidation matrix.
+- [x] **Template mode removed** (shipped in v0.3.0a3). Was inert
+  storage-only code since v0.2; rule stacking covers the use cases
+  it was originally intended for (see
+  [`docs/examples.md`](docs/examples.md)). Stored rules with
+  `mode: template` fail validation on load and drop silently.
 - [ ] **Door 1** — entity settings dialog injection with a kill-switch,
   so individual entity pages get a "Smart Icon" section.
 - [ ] Translations — en plus framework for community PRs.
-
-**Demoted from v0.3:** Template-mode evaluation. The Jinja runtime
-that v0.3 was originally going to ship has been moved to
-demand-driven status — rule stacking (priority + selective matching;
-see [`docs/examples.md`](docs/examples.md)) already covers the
-"compute decoration from state" use cases template mode was meant
-for. Pick it back up when real user demand surfaces a case that
-stacking genuinely can't express. The schema still accepts
-`mode: template` in storage (so existing rules don't break);
-runtime evaluation is just deferred.
 
 ### v0.4+ — polish
 

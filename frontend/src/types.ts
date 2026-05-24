@@ -9,6 +9,10 @@
 export interface Decoration {
   color?: string | null;
   icon?: string | null;
+  /** Mushroom-style background chip color (v0.3+). Optional; rules
+   *  without one get no chip. Same value space as `color` — any CSS
+   *  color string (hex, rgb(), rgba(), hsl(), named, var(--…)). */
+  background_color?: string | null;
 }
 
 export interface ThresholdEntry {
@@ -19,9 +23,10 @@ export interface ThresholdEntry {
   eq?: number | string;
   color?: string | null;
   icon?: string | null;
+  background_color?: string | null;
 }
 
-export type RuleMode = 'thresholds' | 'mapping' | 'template';
+export type RuleMode = 'thresholds' | 'mapping';
 
 export interface Rule {
   id: string;
@@ -39,7 +44,6 @@ export interface Rule {
   mode: RuleMode;
   thresholds?: ThresholdEntry[];
   mapping?: Record<string, Decoration>;
-  template?: string;
   enabled: boolean;
   priority: number;
   created: string;
@@ -73,6 +77,11 @@ export interface HassStates {
 // frontend respects, so the painter applies this value as `style.color`
 // on the outer `<ha-state-icon>`. Keep in sync with `const.py`.
 export const SMART_ICONS_COLOR_ATTR = 'smart_icons_color';
+// Mushroom-style background chip color (v0.3). When the injector writes
+// this, the painter renders a colored circle behind the icon. Same
+// state-attribute delivery channel as the color: no extra WS calls,
+// works for every authenticated viewer. Keep in sync with `const.py`.
+export const SMART_ICONS_BACKGROUND_ATTR = 'smart_icons_background';
 
 export interface Hass {
   connection: HassConnection;

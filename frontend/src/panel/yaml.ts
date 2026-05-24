@@ -40,7 +40,6 @@ const KEY_ORDER = [
   'mode',
   'mapping',
   'thresholds',
-  'template',
   'enabled',
   'priority',
 ] as const;

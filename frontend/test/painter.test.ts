@@ -109,6 +109,26 @@ describe('Painter', () => {
     expect(icon.dataset.smartIconsOwned).to.be.undefined;
   });
 
+  it('paints a chip when only smart_icons_background is set (bg-only rule)', () => {
+    // Bg-only rules: the entity has the background attribute but no
+    // color attribute. The painter should still render the chip and
+    // leave the icon's natural color alone.
+    host = makeTileCard('light.bg_only', {
+      smart_icons_background: '#43a047',
+    });
+    document.body.appendChild(host);
+
+    painter = new Painter();
+    painter.start();
+
+    const icon = getStateIcon(host);
+    expect(icon.style.color).to.equal('');
+    expect(icon.style.backgroundColor).to.equal('rgb(67, 160, 71)');
+    expect(icon.style.borderRadius).to.equal('50%');
+    expect(icon.style.boxShadow).to.contain('rgb(67, 160, 71)');
+    expect(icon.dataset.smartIconsOwned).to.equal('color');
+  });
+
   it('releases the host when smart_icons_color is removed from attributes', async () => {
     host = makeTileCard('light.released', { smart_icons_color: 'red' });
     document.body.appendChild(host);
@@ -267,6 +287,40 @@ describe('applyStateObjPatch', () => {
     inst.stateObj = payload;
     expect(setHistory).to.have.lengthOf(1);
     expect(setHistory[0]).to.equal(payload);
+  });
+
+  it('applies the chip when only smart_icons_background is set on the stateObj', () => {
+    // FakeIcon's default `style` only has `color` — applyDecoration's
+    // chip path writes backgroundColor / borderRadius / boxShadow, so
+    // we extend the style shape here so the patch's writes land
+    // somewhere observable instead of throwing.
+    const { klass } = makeFakeIconClass();
+    applyStateObjPatch(klass);
+
+    const inst = new (klass as unknown as {
+      new (): {
+        style: { color: string; backgroundColor?: string; borderRadius?: string; boxShadow?: string };
+        dataset: Record<string, string | undefined>;
+        stateObj: unknown;
+      };
+    })();
+    inst.style.backgroundColor = '';
+    inst.style.borderRadius = '';
+    inst.style.boxShadow = '';
+
+    inst.stateObj = {
+      entity_id: 'sensor.bg_only',
+      state: 'on',
+      attributes: { smart_icons_background: '#43a047' },
+    };
+
+    // No color override — style.color stays empty.
+    expect(inst.style.color).to.equal('');
+    // Chip applied via the bg path.
+    expect(inst.style.backgroundColor).to.equal('#43a047');
+    expect(inst.style.borderRadius).to.equal('50%');
+    expect(inst.style.boxShadow).to.contain('#43a047');
+    expect(inst.dataset.smartIconsOwned).to.equal('color');
   });
 
   it('clears color and the dataset marker when smart_icons_color is absent', () => {

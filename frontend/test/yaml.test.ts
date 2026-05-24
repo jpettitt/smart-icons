@@ -98,6 +98,60 @@ describe('ruleToYaml', () => {
     expect(out).not.to.include('source:');
   });
 
+  it('round-trips background_color in both mapping and thresholds', () => {
+    // Regression guard: js-yaml dumps and re-parses background_color
+    // generically, but a future stripForExport change could quietly
+    // drop the field. This test catches that.
+    const r = rule({
+      mode: 'mapping',
+      thresholds: undefined,
+      mapping: {
+        on: {
+          color: '#ffff00',
+          background_color: '#43a047',
+        },
+        highlighted: { background_color: 'rgba(67, 160, 71, 0.5)' },
+      },
+    });
+    const text = ruleToYaml(r);
+    expect(text).to.include('background_color:');
+    expect(text).to.include('#43a047');
+    expect(text).to.include('rgba(67, 160, 71, 0.5)');
+
+    const result = yamlToImportable(text);
+    expect(result.parseError).to.be.null;
+    const round = result.rules[0];
+    expect(round.mapping?.on?.background_color).to.equal('#43a047');
+    expect(round.mapping?.highlighted?.background_color).to.equal(
+      'rgba(67, 160, 71, 0.5)',
+    );
+  });
+
+  it('round-trips threshold entries with background_color', () => {
+    const r = rule({
+      mode: 'thresholds',
+      mapping: undefined,
+      thresholds: [
+        { lt: 18, color: '#ffff00', background_color: '#43a047' },
+        { background_color: 'gray' },
+      ],
+    });
+    const text = ruleToYaml(r);
+    expect(text).to.include('background_color: \'#43a047\'');
+
+    const result = yamlToImportable(text);
+    expect(result.parseError).to.be.null;
+    const round = result.rules[0];
+    expect(round.thresholds?.[0]).to.deep.equal({
+      lt: 18,
+      color: '#ffff00',
+      background_color: '#43a047',
+    });
+    expect(round.thresholds?.[1]).to.deep.equal({
+      background_color: 'gray',
+    });
+  });
+
   it('round-trips a single rule through yamlToImportable', () => {
     const original = rule({
       targets: ['light.kitchen_main', 'light.kitchen_under_cab'],

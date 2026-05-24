@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 import voluptuous as vol
 
-from custom_components.smart_icons.const import MAX_TEMPLATE_LENGTH
 from custom_components.smart_icons.rule import Rule, validate_rule
 
 
@@ -52,20 +51,37 @@ def test_valid_mapping_rule():
     assert "_else" in out["mapping"]
 
 
-def test_valid_template_rule():
-    # Template-mode rules round-trip through storage validation.
-    # Runtime evaluation is demand-driven (see TODO.md); storage
-    # validation stays so existing rules don't break.
-    out = validate_rule(
-        {
-            "target": "light.kitchen",
-            "mode": "template",
-            "template": "{{ 'inherit' }}",
-        }
-    )
-    assert out["mode"] == "template"
-    # source defaults to target when omitted.
-    assert out["source"] == "light.kitchen"
+def test_template_mode_rejected():
+    # Template mode was inert through the v0.3 alpha line and is
+    # removed entirely in v0.3.0a3. Validation now rejects it.
+    with pytest.raises(vol.Invalid):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "template",
+                "template": "{{ 'inherit' }}",
+            }
+        )
+
+
+def test_template_field_rejected_in_any_mode():
+    # The `template` field is no longer in the schema. The rule
+    # base schema is strict-keys (voluptuous default), so any
+    # stray `template` field fails validation. In practice this
+    # only bites users who had `mode: template` rules in storage
+    # from v0.2 / v0.3-early — those rules fail to load and are
+    # silently dropped by the store's per-rule vol.Invalid catch.
+    # Non-template-mode rules never carried a template field in
+    # the first place, so this is a no-op for them.
+    with pytest.raises(vol.Invalid):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "mapping",
+                "mapping": {"on": {"color": "#fff"}},
+                "template": "{{ 'inherit' }}",
+            }
+        )
 
 
 def test_missing_target_rejected():
@@ -95,19 +111,6 @@ def test_mapping_required_payload():
     bad.pop("mapping")
     with pytest.raises(vol.Invalid):
         validate_rule(bad)
-
-
-def test_template_required_payload():
-    with pytest.raises(vol.Invalid):
-        validate_rule({"target": "light.kitchen", "mode": "template"})
-
-
-def test_template_too_long_rejected():
-    too_long = "x" * (MAX_TEMPLATE_LENGTH + 1)
-    with pytest.raises(vol.Invalid):
-        validate_rule(
-            {"target": "light.kitchen", "mode": "template", "template": too_long}
-        )
 
 
 def test_threshold_multiple_comparators_rejected():

@@ -1,5 +1,13 @@
 # Prototype: contrasting outline for painted icons
 
+> **Status: superseded.** The outline approach this doc designed
+> was prototyped in v0.3.0a1, shipped briefly in a1/a2, and was
+> retired in v0.3.0a3 in favor of a Mushroom-style per-rule
+> background chip — see the status note at the top of
+> [`icon-outline-prototype-results.md`](icon-outline-prototype-results.md)
+> for the reasoning. This doc is preserved as historical record of
+> the variant design space.
+
 **Status:** design — pre-prototype. No code yet. This doc enumerates
 the variants worth testing, the dark/light interaction matrix, the
 render-timing measurement plan, and the criteria a variant must

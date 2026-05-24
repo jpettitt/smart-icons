@@ -64,38 +64,39 @@ for the full list. Highlights:
   variants including a combined direction-aware + elevation-banded
   two-rule pattern.
 
-## v0.3 — contrasting outline + Door 1
+## v0.3 — background chip + Door 1
 
 Open items, in roughly priority order:
 
-- [ ] **Contrasting outline on painted icons** — installation-wide
-  admin toggle (default on). Native SVG `paint-order: stroke fill`
-  applied by the painter to the inner `<path>` of every painted
-  `<ha-state-icon>`. Outline color auto-picked black/white from the
-  painted color's W3C relative luminance. Scope: only icons Smart
-  Icons paints; HA's default-colored icons are out of scope (see
-  prototype results doc for the design rationale).
-  - Backend: `outline_enabled` field in storage doc; admin WS
-    `smart_icons/update_options`; non-admin WS
-    `smart_icons/get_options`; bus event on change.
-  - Frontend: panel checkbox; painter reads option at bootstrap +
-    subscribes to event; `applyDecoration` applies stroke when
-    enabled.
-  - Tests + docs (CHANGELOG / README / DESIGN / examples).
-- [ ] **Convert rule editor's bare HTML form elements to ha-***
-  (targeting v0.3.0a2). The rule editor currently uses `<input>` /
-  `<select>` / `<textarea>` / `<button>` styled with HA CSS
-  variables — a deliberate workaround when `ha-textfield`'s
-  lazy-load chunk was unreliable. The pattern violates the
-  project's no-bare-form-elements rule. Convert to
-  `ha-textfield` / `ha-select` / `ha-button` (with
-  `customElements.whenDefined` graceful-load fallback where the
-  lazy-load concern still holds — re-verify which elements
-  actually need it in current HA). ~22 elements across
-  rule-editor.ts plus 2 buttons + 1 textarea on smart-icons-panel.ts.
-  Risk: rule-editor UI regression — manual verification of every
-  field on every rule mode (mapping, thresholds, glob, color
-  picker) is part of the test plan.
+- [x] **Contrasting outline on painted icons** — **superseded by
+  the v0.3 per-rule Mushroom-style background chip
+  (`background_color`).** After multiple stroke/halo/morphological-
+  close iterations against alpha-mask cutouts produced unavoidable
+  artifacts on icons with internal holes (alert-circle, bell), the
+  outline concept was retired in favor of per-rule colored chips
+  rendered behind the icon. The installation-wide
+  `outline_enabled` admin toggle, its WS commands
+  (`smart_icons/get_options`, `smart_icons/update_options`), the
+  `smart_icons_options_updated` bus event, and the
+  `DEFAULT_OPTIONS` storage doc have all been removed in v0.3.0a3.
+  See `docs/icon-outline-prototype-results.md` for the historical
+  design rationale.
+- [x] **Rule editor migrated to HA-native form elements**
+  (shipped in v0.3.0a2). All text/number inputs use `ha-input`;
+  pickers use `ha-selector` / `ha-icon-picker`; primary buttons
+  are `ha-button`; the enabled toggle is `ha-switch`. The four
+  remaining bare elements (`<input type="color">` swatch picker,
+  two icon-button-style `<button>`s, and the per-rule YAML
+  textarea) are documented exceptions per
+  [`docs/ha-elements-guide.md`](docs/ha-elements-guide.md)
+  decision-tree item 4.
+- [x] **YAML editing migrated to `ha-code-editor`** (shipped in
+  v0.3.0a3). Both the per-rule YAML view inside the rule editor
+  and the whole-config view in the panel now use HA's CodeMirror 6
+  surface (the same one the automation editor and trace viewer
+  use). Brings syntax highlighting, search, entity/icon
+  completion, and Ctrl+S save. Jump-to-rule and jump-to-line
+  rewired on top of CodeMirror's `dispatch({ selection })`.
 - [ ] **Door 1** — entity settings dialog injection with kill-switch,
   so individual entity pages get a "Smart Icon" section. Verify the
   `entity-registry-settings` element name and shape against current HA
@@ -110,47 +111,53 @@ Open items, in roughly priority order:
 - [ ] Optional `opacity` decoration property.
 - [ ] Politeness layer — per-property stand-down when other plugins own
   `style.color`.
-- [ ] Caching of resolved glob-target sets — current `_resolve_targets()`
-  is O(rules × globs × all-entities) per call; cache and invalidate on
-  rule changes + entity-registry events.
+- [x] **Caching of resolved glob-target sets** (shipped in v0.3.0a3).
+  Per-rule `_resolved_cache` in `IconInjector`; surgical
+  invalidation on rule changes (drop just that rule's entry) and
+  entity-registry / new-entity-appearance events (drop entries for
+  any rule that uses a glob target). Literal-only rules keep
+  their cache across glob events.
 - [ ] Investigate color-update latency on rule edit (~1 s observed
   2026-05-19; icon updates are instant because they ride HA's native
   state-changed path, color goes through the frontend painter).
 
 ## Followups & ideas (parking lot)
 
-- **Template mode — demoted to demand-driven.** Originally on the v0.3
-  roadmap; deferred indefinitely. Rule stacking (priority + selective
-  matching, see the combined sun-direction/elevation example in
-  [`docs/examples.md`](docs/examples.md)) already covers most of the
+- **Template mode — removed entirely in v0.3.0a3.** Template mode
+  was originally on the v0.3 roadmap, then demoted to demand-driven
+  ("storage-only, evaluation returns None") in v0.3.0a1, then
+  removed in v0.3.0a3 after two minor versions of being dead code.
+  Rule stacking (priority + selective matching with the v0.3
+  field-level merge; see the combined sun-direction/elevation
+  example in [`docs/examples.md`](docs/examples.md)) covers the
   "compute decoration from state" use cases that template mode was
   meant for. Pick this back up only if real user demand surfaces a
-  case that rule stacking genuinely can't express.
-- **`_inherit` value for decoration properties.** When rules stack,
-  the current winner-takes-all semantics force the higher-priority
-  rule to specify both `color` and `icon` even if only one is meant
-  to change. An `_inherit` sentinel value would let a higher-priority
-  rule say "change only the icon, keep the color the lower-priority
-  rule would have set":
+  case that rule stacking genuinely can't express; would need to
+  re-introduce the schema field, the evaluator path, the editor UI,
+  *and* the YAML round-trip.
+- **`_inherit` value for decoration properties — superseded.** This
+  was originally a parking-lot idea for v0.4+: a sentinel value that
+  would let a higher-priority rule say "change only the icon, keep
+  the color from the lower-priority rule." The v0.3.0a3 **field-
+  level merge** achieves the same outcome by treating absence-of-a-
+  field as "no opinion" — just omit `color` from the higher-priority
+  rule and it flows through from the lower one:
 
   ```yaml
+  # High-priority "alarm" rule — only sets the glyph.
   mapping:
     'on':
-      color: _inherit
       icon: mdi:door-open
+  # The color comes from whatever lower-priority rule was already
+  # there. Explicit "inherit" / "" / null / "unset" sentinels are
+  # still meaningful — they *block* lower contributions to that
+  # field, which is the inverse of what _inherit was meant to do.
   ```
 
-  Touches the evaluator (`pick_winner` becomes a merge), the rule
-  schema (allow string `_inherit` where a CSS color / mdi: glyph is
-  expected), and probably the panel rule editor (UI hint for the
-  inherit slot). Designed up-front so it's easy to add when stacking
-  patterns become common enough to need it.
-- "All HA icons" outline toggle — applies the contrasting-outline
-  treatment to *every* `<ha-state-icon>` on the page, not just
-  Smart-Icons-painted ones. Defer unless users ask; current v0.3
-  scope is painted-only because the broader scope risks Mushroom /
-  card-mod / theme conflicts and turns Smart Icons into a general
-  icon-restyler.
+  See [DESIGN.md § 4.2](DESIGN.md#42-decorations-and-the-priority-merge).
+  If a future case needs an explicit "inherit even if a higher rule
+  set this field" semantic, that's a different feature; the
+  parking-lot proposal is closed.
 - Consider exposing a tiny JS API (`window.smartIcons.setRule(...)`) for
   use from button-card and similar — turns smart-icons into a service for
   other plugins, not just a UI.

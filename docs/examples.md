@@ -18,7 +18,7 @@ glyphs. One rule covers every matching sensor on the install.
 
 ```yaml
 targets:
-  - binary_sensor.*_door
+  - binary_sensor.*door_contact
 mode: mapping
 mapping:
   'on':
@@ -32,11 +32,12 @@ mapping:
 Three things are worth noticing in this minimal rule, because they
 recur in every example after this:
 
-- **`targets:` is a glob.** `binary_sensor.*_door` matches every
-  binary sensor whose `object_id` ends in `_door`. Adjust the
-  pattern to match your naming convention — `binary_sensor.*door*`
-  is broader, `binary_sensor.front_door_contact` targets one
-  specific sensor.
+- **`targets:` is a glob.** `binary_sensor.*door_contact` matches the
+  canonical Zigbee2MQTT / Z-Wave door-sensor naming —
+  `binary_sensor.front_door_contact`, `binary_sensor.kitchen_door_contact`,
+  etc. Adjust the pattern to your install: `binary_sensor.*_door` if
+  you have bare-named sensors, `binary_sensor.*door*` to catch
+  everything door-related, or a literal entity id to target one.
 - **No `source:` field.** With a glob target and no explicit
   source, Smart Icons applies the rule per-target: each matched
   sensor reads its own state. One rule, every door colored by its
@@ -46,6 +47,41 @@ recur in every example after this:
   state `"on"` HA reports. Quoting the keys is the safest reflex —
   see the [sun-direction example below](#direction-aware-variant)
   for the same gotcha with `True` / `False`.
+
+### Same rule with a background chip (v0.3+)
+
+Same target, different visual idiom: the v0.3 `background_color`
+field paints a Mushroom-style colored circle behind the icon. With
+the chip carrying the state (red = open, green = closed), the icon
+itself can stay simple — a white glyph reads at a glance against
+either fill. No icon override needed; HA's default door glyph is
+fine.
+
+```yaml
+targets:
+  - binary_sensor.*door_contact
+mode: mapping
+mapping:
+  'off':
+    color: white
+    background_color: green
+  'on':
+    color: white
+    background_color: red
+```
+
+The chip is independent of `color` and `icon` — you can set one
+field, two, or all three on each mapping entry. Any CSS color
+string works, including `rgba()` for translucent chips that let
+the card background show through.
+
+A rule with only `background_color` set (no `color`, no `icon`)
+paints just the chip and leaves the icon's natural color and glyph
+alone, which is the right shape for a "highlight" rule layered on
+top of an existing state-driven rule (the field-level merger keeps
+both effects; see the
+[sun example](#same-effect-via-field-level-merge-v030a3) for what
+that looks like in practice).
 
 ## Locks
 
@@ -341,17 +377,93 @@ generalizes to other "combine two views of the same entity" problems:
   sunrise/sunset glyph during exactly the part of the day where it
   matters.
 - **Outside the dead zone the elevation rule wins** because it has
-  the higher priority (20 vs 10), and Smart Icons' winner-takes-all
-  semantics give the whole decoration (color *and* glyph) to the
-  winner — there's no merging.
+  the higher priority (20 vs 10), and the elevation entries set
+  both `color` and `icon` so the merger has nothing else to pick
+  up from the lower-priority rule.
 - **The dead zone's width is yours to tune.** Widen it to -10° / +10°
   if you want sunrise/sunset icons through a longer twilight; narrow
   it to -3° / +3° if you only want them for the moments the sun is
   visually on the horizon. The chosen ±6° band roughly matches civil
   twilight.
 
-A naïve three-rule design — one rule for color, one for icon, one
-for direction — doesn't work here, because each rule's decoration is
-atomic: the winner contributes both `color` *and* `icon`, and lower-
-priority rules are not merged in. Two rules with carefully chosen
-coverage is the right shape.
+The two-rule + dead-zone pattern works on every Smart Icons version
+and is worth knowing because the same "let a lower rule fill in the
+gap" trick generalizes (e.g. "unavailable warning + thresholds" in
+the [temperatures example](#temperatures--nws-color-scale--stale-data-warning)
+above). v0.3.0a3 added a more direct alternative — see the next
+subsection.
+
+### Same effect via field-level merge (v0.3.0a3+)
+
+The two-rule + dead-zone design above predates the **field-level
+merge** introduced in v0.3.0a3. With merging, the winning rule no
+longer "takes all" — fields a higher-priority rule doesn't address
+flow through from lower-priority rules. That unlocks a more direct
+three-rule shape: one rule per concern (color, glyph, direction),
+none of them fighting each other.
+
+```yaml
+rules:
+  # Direction glyph — always matches, but only sets `icon`.
+  # The lower rules contribute color; this one doesn't.
+  - targets:
+      - sun.sun
+    source_attribute: rising
+    mode: mapping
+    mapping:
+      'True':
+        icon: mdi:weather-sunset-up
+      'False':
+        icon: mdi:weather-sunset-down
+    priority: 5
+
+  # Elevation glyph for the high-sky band — overrides the
+  # direction glyph when the sun is well up. Only sets `icon`.
+  - targets:
+      - sun.sun
+    source_attribute: elevation
+    mode: thresholds
+    thresholds:
+      - lt: -6
+        icon: mdi:weather-night
+      - gt: 6
+        icon: mdi:weather-sunny
+    priority: 10
+
+  # Elevation color — fully covers every elevation band. Only
+  # sets `color`; the icon comes from whichever icon rule wins.
+  - targets:
+      - sun.sun
+    source_attribute: elevation
+    mode: thresholds
+    thresholds:
+      - lt: -12
+        color: '#0d1233'
+      - lt: -6
+        color: '#1a1f4a'
+      - lt: 6
+        color: '#ff8c00'
+      - lt: 30
+        color: '#ffd700'
+      - color: '#ffeb3b'
+    priority: 10
+```
+
+Two things change from the two-rule version:
+
+- **No dead zone needed.** The color rule has an `_else` branch
+  covering every elevation; the icon rules can overlap or not as
+  you like because each only contributes the glyph. Near the
+  horizon you get the direction glyph (priority 5 wins because the
+  elevation icon rule's thresholds don't match in that band); high
+  in the sky or deep below it, the elevation glyph wins.
+- **Each rule reads like one decision.** Color-by-elevation is a
+  pure color rule, glyph-by-elevation is a pure glyph rule,
+  direction-by-rising is a pure glyph fallback. The two-rule
+  version above stuffs both decisions into each rule and uses the
+  no-match gap to coordinate — cleverer, but harder to extend.
+
+If you also want a **chip** behind the sun icon (say, gray during
+the day, dark blue at night), add a fourth rule with only
+`background_color` set on each threshold entry. It merges in
+without disturbing color or glyph.
