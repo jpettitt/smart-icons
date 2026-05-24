@@ -10,16 +10,14 @@ per-card configuration.
 [![License](https://img.shields.io/github/license/jpettitt/smart-icons?style=for-the-badge)](LICENSE)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
 
-> **Status:** v0.3.0a3 alpha — adds per-rule Mushroom-style
-> background chip + field-level rule merging on top of the v0.2.2
-> GA. See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
-> The contrasting-outline approach explored earlier in the v0.3
-> cycle was abandoned
-> ([rationale](docs/icon-outline-prototype-results.md)) when the
-> chip approach proved cleaner. Template mode was inert through
-> v0.2 / v0.3 alpha and removed in v0.3.0a3; rule stacking covers
-> the use cases template mode was originally for
-> (see [`docs/examples.md`](docs/examples.md)).
+> **Status:** v0.3.0 — GA. Brings per-rule Mushroom-style
+> background chips, field-level rule merging, an `ha-code-editor`
+> YAML surface, and a glob-target resolution cache for large
+> installs. Template mode was inert through v0.2 / v0.3 alpha and
+> is removed in v0.3.0 (rule stacking covers the use cases — see
+> [`docs/examples.md`](docs/examples.md)). See
+> [CHANGELOG.md](CHANGELOG.md) for the full release notes and
+> upgrade guide.
 
 ## See it in action
 
@@ -68,32 +66,77 @@ the rule from the card: declare it once, in one place, and it applies
 wherever that entity appears — including the mobile app and voice displays,
 because the icon swap happens server-side via `state.attributes.icon`.
 
-## What's new in 0.2
+## What's new in v0.3
 
-- **Multi-target rules** — one rule decorates many entities at once. Pick
-  them in the panel via HA's native multi-entity selector, or list them as
-  `targets: [...]` in YAML / JSON.
-- **Glob target patterns** — `light.kitchen_*`, `sensor.temp_?`, etc.
-  Resolved against `hass.states` at apply time; newly-added entities that
-  match an existing glob pick up the rule automatically.
-- **Per-target source semantics** — for a multi-target or glob rule with no
-  explicit source, each matched target reacts to **its own** state (and
-  `source_attribute`, if set). One rule, every kitchen light colored by its
-  own brightness.
-- **State autocomplete in the mapping editor** — each mapping-state cell
-  shows the states the source entity has actually been in over the last
-  seven days, sourced from the recorder.
-- **Admin-only management** — the panel and WebSocket API are admin-gated.
-  Non-admin users still see correctly painted icons on their dashboards
-  (the painter reads from state attributes, not the WS API).
-- **Responsive panel layout** — the rules table reformats as a card stack
-  on narrow widths via CSS container queries (correctly tracks HA sidebar
-  state, unlike viewport-based media queries).
-- **A pile of bug fixes** since v0.1 — color race on state change, glob
-  rules failing to apply after HA restart, ha-button vs mwc-button.
+- **Per-rule background chip (`background_color`)** — paint a
+  Mushroom-style colored circle behind any icon. Set just the chip,
+  just the color, both, or all three (color + icon + chip) on any
+  mapping or threshold entry. Accepts every CSS color string
+  including `rgba()` for translucent chips. See the
+  [doors example](docs/examples.md#same-rule-with-a-background-chip)
+  for a quick taste.
+- **Field-level rule merging** — when multiple rules target the same
+  entity, the highest-priority rule that addresses each field wins
+  that field. Lower-priority rules fill in fields the winner didn't
+  touch. A bg-only highlight rule layered on a color-by-state rule
+  keeps both effects. Explicit `null` / `""` / `"inherit"` /
+  `"unset"` sentinels in a high-priority rule actively *block*
+  lower-priority contributions to that field. Replaces v0.2's
+  "winner-takes-all" rule. See the
+  [sun example](docs/examples.md#direction-aware-and-elevation-banded--two-rules-one-outcome)
+  and [DESIGN.md § 4.2](DESIGN.md#42-decorations-and-the-priority-merge)
+  for the full semantics.
+- **YAML editing on `ha-code-editor`** — both the per-rule YAML
+  view and the whole-config YAML view migrated from bare
+  `<textarea>` to HA's CodeMirror 6 surface (same one the
+  automation editor uses). Brings syntax highlighting, search,
+  entity/icon autocompletion, and Ctrl+S / Cmd+S to save. Jump-to-
+  rule and jump-to-line still work for clickable validation errors.
+- **Rule editor: HA-native form elements, paired color picker.**
+  Every text/number field is `ha-input`; pickers are `ha-selector`
+  and `ha-icon-picker`; primary buttons are `ha-button`. Mapping
+  and threshold rows now show *Icon color* and *Background* side
+  by side in a paired picker so the visual relationship is
+  obvious. Threshold comparators got plain-English labels (`<
+  Less than`, etc.) on the same line as the value.
+- **Glob-target resolution cache** — large HA installs (5k+
+  entities, many glob rules) no longer run `fnmatch` against every
+  entity id on every state change. Per-rule `_resolved_cache` in
+  the injector with surgical invalidation on rule changes and
+  entity-registry events.
+- **Visual examples** — `docs/examples.md` now shows actual
+  rendered icons next to the YAML for the doors and sun examples,
+  with theme-aware light/dark variants for the sun's six icons.
+- **Bug fixes** — stale icons no longer stick after a rule drops
+  its `icon`; bg-only rules now paint; editor validation
+  properly catches blank threshold rows and key-only mapping
+  rows.
 
-See the [v0.2.0b2 release notes](https://github.com/jpettitt/smart-icons/releases/tag/v0.2.0b2)
-and [CHANGELOG.md](CHANGELOG.md) for the full list.
+## Breaking changes from v0.2
+
+- **Template mode (`mode: template`) is removed.** Stored rules
+  with that mode fail validation on load and are silently dropped.
+  Template-mode evaluation was inert through v0.2 / v0.3 alpha
+  (the evaluator always returned `None`); v0.3 drops the dead
+  code. Migration: build the same logic out of stacked mapping
+  and threshold rules with the new field-level merge — see
+  [`docs/examples.md`](docs/examples.md).
+- **Priority is now field-level, not rule-level.** Any
+  installation that relied on the v0.2 "highest-priority rule
+  erases everything else" semantic should be re-checked. To
+  actively hide a lower-priority rule's contribution to a field,
+  set that field to `null` or `"inherit"` explicitly — the merger
+  treats sentinels as a release that *blocks* lower contributions.
+- **Installation-wide outline toggle is gone.** The
+  contrasting-outline approach prototyped in early v0.3 alpha was
+  abandoned in favor of the per-rule chip; the `outline_enabled`
+  storage field, the `smart_icons/get_options` and
+  `smart_icons/update_options` WebSocket commands, the
+  `smart_icons_options_updated` bus event, and the
+  *Contrasting outline* panel checkbox are all removed.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full v0.3.0 entry and
+upgrade notes.
 
 ## How it works
 
@@ -107,8 +150,8 @@ priority order, and writes the result onto the target's state attributes:
 - `smart_icons_color` — our namespaced color hint. The painter bundle
   (~5 KB, loaded on every Lovelace page) bridges this to inline
   `style.color` on each icon host.
-- `smart_icons_background` — Mushroom-style chip color (v0.3+).
-  When set, the painter renders a colored circle behind the icon via
+- `smart_icons_background` — Mushroom-style chip color. When set,
+  the painter renders a colored circle behind the icon via
   `background-color` + `border-radius: 50%` + an inset `box-shadow`
   ring on the host. Independent of `smart_icons_color`: either, both,
   or neither may be set per rule.
@@ -164,7 +207,8 @@ Each rule has:
   touch. A bg-only highlight rule on top of a color-by-state rule
   keeps both effects. Explicit `null` / `""` / `"inherit"` / `"unset"`
   in a high-priority rule blocks lower rules from contributing that
-  field (v0.3+; see [DESIGN.md § 4.2](DESIGN.md#42-decorations-and-the-priority-merge) for the full semantic).
+  field (see [DESIGN.md § 4.2](DESIGN.md#42-decorations-and-the-priority-merge)
+  for the full semantic).
 
 Example: recolor every kitchen light by its own brightness.
 
@@ -187,7 +231,7 @@ its own `brightness`.)
 For more ready-to-paste rules covering common entity types, see
 [docs/examples.md](docs/examples.md).
 
-### Background chips (v0.3+)
+### Background chips
 
 A rule can decorate an icon with a colored circular background chip,
 in the Mushroom card style, by setting `background_color` on a
@@ -221,12 +265,9 @@ natural color alone.
 
 ## Roadmap
 
-- **v0.3** — Mushroom-style per-rule background chip
-  (`background_color` on mapping / threshold entries); field-level
-  rule merging (highest-priority value wins per field, not per rule);
-  Door 1 (entity settings dialog injection); translations framework.
 - **v0.4+** — Drag-reorder priority in the panel, import/export,
-  icon-pack picker, optional opacity decoration.
+  icon-pack picker, optional opacity decoration, Door 1 (entity
+  settings dialog injection), translations framework.
 
 Full backlog: [TODO.md](TODO.md) and [DESIGN.md § 11](DESIGN.md#11-roadmap).
 
