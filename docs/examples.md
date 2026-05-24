@@ -403,8 +403,8 @@ column as a whole-config block, or paste the two rules individually.
 
 ```yaml
 rules:
-  # Direction-aware mapping. Always matches because `rising` is
-  # always True or False — no _else needed.
+  # Direction mapping — `rising` is binary
+  # (True / False), so no _else needed.
   - targets:
       - sun.sun
     source_attribute: rising
@@ -418,9 +418,10 @@ rules:
         icon: mdi:weather-sunset-down
     priority: 10
 
-  # Elevation banding for the rest of the sky. Deliberately has
-  # *no* entry covering the -6° to +6° transition window, so the
-  # rule produces no decoration there.
+  # Elevation banding. No entry covers
+  # the -6° to +6° band, so the rule
+  # produces nothing there — the dead
+  # zone where Rule 1 fills in.
   - targets:
       - sun.sun
     source_attribute: elevation
