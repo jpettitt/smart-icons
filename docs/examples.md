@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD033 -->
 # Example rules
 
 A growing collection of ready-to-paste Smart Icons rules.
@@ -16,6 +17,24 @@ The simplest useful Smart Icons rule. Color every door (or window)
 contact sensor green when closed and red when open, with matching
 glyphs. One rule covers every matching sensor on the install.
 
+<table>
+<thead>
+<tr>
+  <th>State</th>
+  <th>Icon</th>
+  <th>Glyph</th>
+  <th>Color</th>
+  <th>YAML</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>'on'</code> (open)</td>
+  <td align="center"><img src="https://api.iconify.design/mdi/door-open.svg?color=%23ff0000&width=32" alt="open door, red" /></td>
+  <td><code>mdi:door-open</code></td>
+  <td><code>#ff0000</code></td>
+  <td rowspan="2">
+
 ```yaml
 targets:
   - binary_sensor.*door_contact
@@ -26,8 +45,19 @@ mapping:
     icon: mdi:door-open
   'off':
     color: '#008000'
-    icon: mdi:door-closed-lock
+    icon: mdi:door
 ```
+
+  </td>
+</tr>
+<tr>
+  <td><code>'off'</code> (closed)</td>
+  <td align="center"><img src="https://api.iconify.design/mdi/door.svg?color=%23008000&width=32" alt="closed door, green" /></td>
+  <td><code>mdi:door</code></td>
+  <td><code>#008000</code></td>
+</tr>
+</tbody>
+</table>
 
 Three things are worth noticing in this minimal rule, because they
 recur in every example after this:
@@ -57,6 +87,24 @@ itself can stay simple — a white glyph reads at a glance against
 either fill. No icon override needed; HA's default door glyph is
 fine.
 
+<table>
+<thead>
+<tr>
+  <th>State</th>
+  <th>Chip</th>
+  <th>Glyph</th>
+  <th>Color / Background</th>
+  <th>YAML</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>'on'</code> (open)</td>
+  <td align="center"><img src="img/door-chip-on.svg" width="48" height="48" alt="open door icon (white) on a red chip" /></td>
+  <td><code>mdi:door-open</code> (HA default)</td>
+  <td><code>white</code> on <code>red</code></td>
+  <td rowspan="2">
+
 ```yaml
 targets:
   - binary_sensor.*door_contact
@@ -69,6 +117,17 @@ mapping:
     color: white
     background_color: red
 ```
+
+  </td>
+</tr>
+<tr>
+  <td><code>'off'</code> (closed)</td>
+  <td align="center"><img src="img/door-chip-off.svg" width="48" height="48" alt="closed door icon (white) on a green chip" /></td>
+  <td><code>mdi:door</code> (HA default)</td>
+  <td><code>white</code> on <code>green</code></td>
+</tr>
+</tbody>
+</table>
 
 The chip is independent of `color` and `icon` — you can set one
 field, two, or all three on each mapping entry. Any CSS color
