@@ -2,6 +2,8 @@
 
 An independent technical and architectural review of the **Smart Icons** Home Assistant integration codebase, design, and documentation.
 
+*Prepared by **AntiGravity** (powered by Gemini 3.5).*
+
 ---
 
 ## 1. Executive Summary
@@ -47,42 +49,36 @@ The transition in the v0.3 line from the v0.2 "winner-takes-all" rule to **per-f
 
 ## 4. Diagnostics, Gaps, and Future Risks
 
-### 4.1 Performance Overhead in Glob Resolution
-In `injector.py`, `_resolve_targets` resolves globs against all registered entity IDs:
-```python
-if all_ids is None:
-    all_ids = list(self._hass.states.async_entity_ids())
-out.update(fnmatch.filter(all_ids, entry))
-```
-On larger Home Assistant configurations with several thousand entities and multiple glob-based rules, running `fnmatch` filtering across all entity IDs on every monitored state change presents an $O(rules \times globs \times entities)$ overhead.
-* **Risk:** Potential CPU spikes on busy, large-scale HA instances during rapid state-change events.
+### 4.1 Performance Overhead in Glob Resolution — **[RESOLVED in v0.3.0a3]**
+Previously, `_resolve_targets` in `injector.py` filtered globs against all registered entity IDs during every state-change cycle, producing an $O(\text{rules} \times \text{globs} \times \text{entities})$ overhead.
+* **Resolution:** An in-memory cache (`_resolved_cache`) was introduced. Matches are resolved and cached per rule ID. The cache is surgically cleared on rule updates or fully flushed on integration reload and entity registry changes. This limits normal state-changed evaluations to $O(1)$ cache lookups.
 
-### 4.2 State Machine Churn
+### 4.2 State Machine Churn — **[DOCUMENTED in v0.3.0a3]**
 The `IconInjector` writes attributes to targets via:
 ```python
 self._hass.states.async_set(target, current.state, new_attrs)
 ```
 While this retains the target entity's state value, it triggers a `state_changed` event in Home Assistant's event bus.
 * **Risk:** External automations or integrations monitoring state changes or broad attribute modifications might fire repeatedly, creating feedback loops or synthetic event overhead.
+* **Mitigation:** A "Notes for integration developers" section in README.md documents the synthetic `state_changed` behavior and shows downstream listeners the filter pattern (`new_state.state != old_state.state` for state-only listeners) to ignore our attribute-only updates.
 
-### 4.3 Bare Form Elements in Rule Editor
-The custom sidebar panel's rule editor (`rule-editor.ts`) relies on styled bare HTML `<input>`, `<select>`, and `<textarea>` elements to bypass historical lazy-loading chunk issues with native `ha-*` elements.
-* **Gap:** This violates the standard project conventions described in `docs/ha-elements-guide.md` and reduces UI visual consistency.
+### 4.3 Bare Form Elements in Rule Editor — **[RESOLVED in v0.3.0a3]**
+Previously, the rule editor (`rule-editor.ts`) relied on raw HTML form elements to bypass lazy-loading component limitations, violating standard house styles.
+* **Resolution:** Fully migrated to HA-native components (`ha-input`, `ha-selector`, `ha-icon-picker`, `ha-button`, `ha-switch`). Safe fallback logic checks if these components have loaded in the DOM (via `customElements.get` and `whenDefined`), displaying clean text/icon inputs in the interim. The YAML editor surface migrated to `ha-code-editor` (CodeMirror 6) at the same time.
 
-### 4.4 Demoted Template Mode
-While `mode: template` is validated, stored, and round-trips correctly, its evaluation returns `None` as the Jinja runtime was demoted to demand-driven status.
-* **Gap:** Users editing rules via YAML might expect template rules to function normally. There is currently no active UI warning indicating that templates are not evaluated.
+### 4.4 Demoted Template Mode — **[RESOLVED in v0.3.0a3]**
+Previously, `mode: template` was validated and stored but its evaluation returned `None` — a stored-but-inert mode that risked user confusion.
+* **Resolution:** Template mode was **removed entirely** in v0.3.0a3. The schema rejects `mode: template`; stored rules with that mode are silently dropped on load by the store's per-rule `vol.Invalid` catch. Rule stacking (priority + selective matching with the new field-level merge) covers the use cases template mode was originally intended for — see `docs/examples.md` for the patterns.
 
 ---
 
-## 5. Recommendations
+## 5. Recommendations & Current Status
 
-### 5.1 Implement Glob-Target Caching
-Introduce a simple caching layer in `IconInjector` that maps rules to resolved entity sets.
-* **Implementation:** Regenerate the cache only on rule store updates, integration restarts, or when an `entity_registry_updated` event occurs. For regular `state_changed` events, use the pre-resolved target sets to achieve $O(1)$ lookups.
+### 5.1 Implement Glob-Target Caching — **[SHIPPED in v0.3.0a3]**
+A dedicated caching layer has been successfully implemented under `_resolved_cache` in the backend. Resolution sets are now persistent and invalidation is handled cleanly during registry and rule-change events.
 
-### 5.2 Transition to HA-Native Web Components
-Address the open v0.3 TODO item to migrate the rule editor's bare elements to their `ha-` equivalents (`ha-textfield`, `ha-select`, `ha-button`). Utilizing safe checks like `customElements.whenDefined` will preserve the UI styling while remaining consistent with HA's design system.
+### 5.2 Transition to HA-Native Web Components — **[SHIPPED in v0.3.0a3]**
+The rule editor form elements have been refactored to native Home Assistant web components, improving UI consistency and maintaining adherence to the design system.
 
 ### 5.3 Add UI Warnings for Template Mode
 If a user creates or pastes a rule containing `mode: template`, the UI or validation layer should present a soft warning or banner indicating that template evaluation is currently deferred and that standard rule stacking should be used instead.

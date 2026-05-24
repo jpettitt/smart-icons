@@ -29,7 +29,7 @@ from .const import (
 )
 from .rule import BulkReplaceError, Rule
 
-INTEGRATION_VERSION = "0.3.0a3"
+INTEGRATION_VERSION = "0.3.0"
 
 
 def async_register_commands(hass: HomeAssistant) -> None:

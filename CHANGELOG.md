@@ -1,6 +1,156 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
+## v0.3.0 — 2026-05-24
+
+**GA release of the v0.3 line.** Ships the consolidated content of
+the v0.3.0a1, a2, and a3 alphas — see those entries below for the
+incremental development history. This entry is the upgrade summary
+for users coming from v0.2.x.
+
+### Breaking changes from v0.2
+
+- **Template mode (`mode: template`) is removed.** Template-mode
+  evaluation was inert through v0.2 / v0.3 alpha (the evaluator
+  always returned `None`); v0.3.0 drops the dead code, the schema
+  field, the editor template view, and the YAML round-trip.
+  Stored rules with `mode: template` fail validation on load and
+  are silently dropped by the store's per-rule `vol.Invalid`
+  catch. **Migration:** build the same logic out of stacked
+  mapping and threshold rules with the new field-level merge —
+  see [`docs/examples.md`](docs/examples.md) for patterns
+  including the sun rising/setting + elevation-banding example
+  that demonstrates the dead-zone fallthrough trick.
+
+- **Priority is now field-level, not rule-level.** The v0.2
+  "highest-priority rule erases everything else" semantic is
+  replaced by per-field merging. The highest-priority rule that
+  *addresses* a given field (color, icon, or background) wins
+  that field; lower-priority rules fill in fields the winner
+  doesn't touch. Concretely: a chip-only rule at priority 99
+  coexists with a color-by-state rule at priority 10 — chip from
+  the high rule, color from the low rule. The v0.2 behavior
+  dropped the color. **Migration:** any rule chain that relied on
+  the implicit "winner takes all" behavior should set explicit
+  null / `""` / `"inherit"` / `"unset"` sentinels on fields the
+  high-priority rule needs to release — sentinels actively block
+  lower-priority contributions, distinguishing "I have no opinion"
+  from "I want this cleared." See
+  [DESIGN.md § 4.2](DESIGN.md#42-decorations-and-the-priority-merge)
+  for the full semantics.
+
+### What's new since v0.2
+
+- **Per-rule background chip (`background_color`).** Mushroom-
+  style colored circle rendered behind the icon. Set on a mapping
+  entry or threshold entry; either `color`, `background_color`,
+  both, or neither may be present per entry. Accepts every CSS
+  color string including `rgba()` for translucent chips.
+- **Field-level priority merging.** Replaces v0.2's winner-takes-
+  all rule (see breaking-changes section above).
+- **YAML editing on `ha-code-editor`.** The per-rule YAML view in
+  the rule editor and the whole-config YAML view in the panel
+  both use HA's CodeMirror 6 surface — same one the automation
+  editor uses. Syntax highlighting, search/replace, entity- and
+  icon-name autocompletion, and a Ctrl+S / Cmd+S save shortcut.
+  Per-rule validation errors remain clickable to jump-to-line.
+- **Rule editor: HA-native form elements throughout.** Every text
+  / number field is `ha-input`; pickers are `ha-selector` and
+  `ha-icon-picker`; primary buttons are `ha-button`. Mapping and
+  threshold rows show *Icon color* + *Background* side-by-side in
+  a paired color picker. Threshold comparators got plain-English
+  labels (`< Less than`, `≤ Less than or equal`, etc.).
+- **Glob-target resolution cache** in the injector. v0.2 ran
+  `fnmatch.filter` against `hass.states.async_entity_ids()` on
+  every relevant state change per glob rule — `O(rules × globs ×
+  entities)` per state change. v0.3 caches resolved sets per rule
+  with surgical invalidation on rule changes, entity-registry
+  events, and new-entity appearance. Cache hits are O(1) — a
+  meaningful win on large installs (5k+ entities, many globs).
+- **Visual examples in `docs/examples.md`.** The doors and sun
+  examples now show actual rendered icons in side-by-side tables
+  with the YAML that produces them. Sun icons are theme-aware
+  via `<picture>` + `prefers-color-scheme` so the deep-night
+  blues remain legible in dark mode.
+- **README "See it in action"** section near the top with a
+  preview of the sun outcome at six representative angles, linked
+  to the full example.
+- **Notes for integration developers** in the README documenting
+  Smart Icons' synthetic `state_changed` writes (attribute-only
+  updates fire `state_changed` with `state` unchanged; downstream
+  listeners that don't care about attribute updates should filter
+  on `new_state.state != old_state.state`).
+
+### Bug fixes since v0.2
+
+- **Stale icons no longer stick after a rule drops the `icon`
+  field.** v0.2 wrote the icon attribute but never cleared it,
+  leaving the previous glyph in place until HA restart. The
+  injector now tracks the last `icon` it wrote per target and
+  pops the attribute when the rule no longer addresses it — only
+  if the current value still matches our last write, so source
+  integrations that overwrote the icon with their own value are
+  left alone.
+- **Background-only rules now paint.** Earlier v0.3 alphas gated
+  the painter on `smart_icons_color` being non-empty, so a rule
+  setting only `background_color` wrote the attribute server-side
+  but the painter ignored it. The painter's two paint paths
+  (setter patch + DOM-crawler) are now deduped into a single
+  `decideAndPaint` helper that triggers on either attribute.
+- **Editor: thresholds-mode validation properly checks for
+  meaningful entries.** Earlier the "needs at least one entry"
+  check used a broken comparison that never fired; now it
+  properly requires a comparator or at least one decoration
+  field per row.
+- **Editor: degenerate mapping rows no longer save.** A row with
+  a key but no color / bg / icon used to serialize as `{key: {}}`
+  — schema-valid but inert at runtime. These rows are now
+  dropped on save with a validation error.
+
+### Internals
+
+- `pick_winner` retired in favor of `merge_decorations` (Python)
+  / `mergeDecorations` (TypeScript). Sparse positions returned
+  from `evaluate_thresholds` / `evaluate_mapping` let the merger
+  distinguish "no position" from "explicit release."
+- Painter deduped into a single `decideAndPaint(host, color, bg)`
+  helper shared by the `stateObj` setter patch and the
+  `paintHost` crawler — eliminates the source of the bg-only
+  paint bug.
+- TypeScript evaluator at parity with Python: handles
+  `background_color` and mirrors the merge semantic exactly. Not
+  on the paint path (the backend injector is authoritative) but
+  the divergence would have been a latent trap for any future
+  preview UI.
+- Backend test coverage: 118 tests covering the merger, bg-only
+  paths, icon-clear contract, source-integration-overwrites
+  safety, the glob cache, and template-mode rejection.
+- Frontend test coverage: rule-editor unit tests added (was
+  previously only covered by Playwright e2e smoke). Web-test-
+  runner config updated to pass the project tsconfig through so
+  Lit's legacy decorators load under test.
+
+### Upgrade from v0.2
+
+Drop-in upgrade with two behavior changes to verify after install:
+
+1. **Template-mode rules silently drop on load.** If you have any
+   rules with `mode: template` in your storage doc, they will fail
+   validation on load and be removed from the panel. Template
+   mode was inert at runtime since v0.2 (the evaluator returned
+   `None`), so functionally nothing changes — but the rule
+   disappears. Rebuild the logic with stacked mapping / threshold
+   rules first if you need to preserve the behavior.
+
+2. **"Winner takes all" → field-level merge.** Any installation
+   that depended on the v0.2 "highest-priority rule erases
+   everything else" semantic should be re-checked. If a
+   high-priority rule needs to actively hide a lower-priority
+   rule's contribution to a field, set that field to `null` /
+   `""` / `"inherit"` / `"unset"` explicitly. Sentinels block
+   lower-priority contributions; absence allows them to flow
+   through.
+
 ## v0.3.0a3 — 2026-05-24
 
 **Alpha 3 on the v0.3 line.** Pivots the v0.3 line away from the
