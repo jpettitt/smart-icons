@@ -392,12 +392,12 @@ Here's what the user ends up seeing at six representative angles:
 </tr>
 <tr>
   <th align="left">Icon</th>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=32" alt="weather night" /></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night-partly-cloudy.svg?color=%231a1f4a&width=32" alt="partly cloudy night" /></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=32" alt="sunset up" /></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=32" alt="sunset down" /></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-hazy.svg?color=%23ffd700&width=32" alt="weather hazy" /></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunny.svg?color=%23ffeb3b&width=32" alt="sunny" /></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-light.svg" width="32" alt="weather night" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-partly-cloudy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-partly-cloudy-light.svg" width="32" alt="partly cloudy night" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="32" alt="sunset up" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="32" alt="sunset down" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-hazy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-hazy-light.svg" width="32" alt="weather hazy" /></picture></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunny-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunny-light.svg" width="32" alt="sunny" /></picture></td>
 </tr>
 </table>
 
@@ -430,7 +430,7 @@ rules:
     mode: thresholds
     thresholds:
       - lt: -12
-        color: '#4a6fbb'
+        color: '#0d1233'
         icon: mdi:weather-night
       - lt: -6
         color: '#1a1f4a'
@@ -462,44 +462,44 @@ composite that HA actually renders:
 <tr>
   <td align="center">−20°</td>
   <td align="center">setting<br><sub><code>'False'</code></sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code><br><sub><em>Rule 2 wins</em></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-light.svg" width="28" alt="weather night" /></picture><br><code>mdi:weather-night</code><br><code>#0d1233</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-light.svg" width="28" alt="weather night" /></picture><br><code>mdi:weather-night</code><br><code>#0d1233</code><br><sub><em>Rule 2 wins</em></sub></td>
 </tr>
 <tr>
   <td align="center">−10°</td>
   <td align="center">setting<br><sub><code>'False'</code></sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night-partly-cloudy.svg?color=%231a1f4a&width=28" alt="partly cloudy night" /><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night-partly-cloudy.svg?color=%231a1f4a&width=28" alt="partly cloudy night" /><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code><br><sub><em>Rule 2 wins</em></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-partly-cloudy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-partly-cloudy-light.svg" width="28" alt="partly cloudy night" /></picture><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-night-partly-cloudy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-night-partly-cloudy-light.svg" width="28" alt="partly cloudy night" /></picture><br><code>mdi:weather-night-partly-cloudy</code><br><code>#1a1f4a</code><br><sub><em>Rule 2 wins</em></sub></td>
 </tr>
 <tr>
   <td align="center">−3°</td>
   <td align="center">rising<br><sub><code>'True'</code></sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
   <td align="center"><em>no match</em><br><sub>(dead zone)</sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code><br><sub><em>Rule 1 fills in</em></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code><br><sub><em>Rule 1 fills in</em></sub></td>
 </tr>
 <tr>
   <td align="center">+3°</td>
   <td align="center">setting<br><sub><code>'False'</code></sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
   <td align="center"><em>no match</em><br><sub>(dead zone)</sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code><br><sub><em>Rule 1 fills in</em></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-down-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-down-light.svg" width="28" alt="sunset down" /></picture><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code><br><sub><em>Rule 1 fills in</em></sub></td>
 </tr>
 <tr>
   <td align="center">+10°</td>
   <td align="center">rising<br><sub><code>'True'</code></sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-hazy.svg?color=%23ffd700&width=28" alt="weather hazy" /><br><code>mdi:weather-hazy</code><br><code>#ffd700</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-hazy.svg?color=%23ffd700&width=28" alt="weather hazy" /><br><code>mdi:weather-hazy</code><br><code>#ffd700</code><br><sub><em>Rule 2 wins</em></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-hazy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-hazy-light.svg" width="28" alt="weather hazy" /></picture><br><code>mdi:weather-hazy</code><br><code>#ffd700</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-hazy-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-hazy-light.svg" width="28" alt="weather hazy" /></picture><br><code>mdi:weather-hazy</code><br><code>#ffd700</code><br><sub><em>Rule 2 wins</em></sub></td>
 </tr>
 <tr>
   <td align="center">+40°</td>
   <td align="center">rising<br><sub><code>'True'</code></sub></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=28" alt="sunset up" /><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunny.svg?color=%23ffeb3b&width=28" alt="sunny" /><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunny.svg?color=%23ffeb3b&width=28" alt="sunny" /><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code><br><sub><em>Rule 2 wins</em></sub></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunset-up-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunset-up-light.svg" width="28" alt="sunset up" /></picture><br><code>mdi:weather-sunset-up</code><br><code>#ff8c00</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunny-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunny-light.svg" width="28" alt="sunny" /></picture><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code></td>
+  <td align="center"><picture><source srcset="img/sun-weather-sunny-dark.svg" media="(prefers-color-scheme: dark)"><img src="img/sun-weather-sunny-light.svg" width="28" alt="sunny" /></picture><br><code>mdi:weather-sunny</code><br><code>#ffeb3b</code><br><sub><em>Rule 2 wins</em></sub></td>
 </tr>
 </tbody>
 </table>
