@@ -34,8 +34,13 @@ interface WorkingState {
   source_attribute: string;
   mode: RuleMode;
   thresholds: Array<ThresholdEntry & { _key: number }>;
-  mapping: Array<{ key: string; color: string; icon: string; _key: number }>;
-  template: string;
+  mapping: Array<{
+    key: string;
+    color: string;
+    background_color: string;
+    icon: string;
+    _key: number;
+  }>;
   enabled: boolean;
   priority: number;
 }
@@ -45,19 +50,21 @@ function nextKey(): number {
   return _nextKey++;
 }
 
-/** Option labels for the threshold-comparator dropdown. The empty
- *  string maps to "no comparator" — the trailing entry that's the
- *  "else" branch when no other rule matches. Kept as a module-level
- *  constant so the array identity is stable across renders (ha-selector
- *  re-runs its options-changed lifecycle when the array reference
- *  changes). */
+/** Option labels for the threshold-comparator dropdown. Labels include
+ *  both the math symbol and a plain-English phrase so the dropdown
+ *  reads at a glance even when the symbol is hard to see at typical
+ *  panel size. The empty string maps to "(else)" — the trailing entry
+ *  that's the no-comparator branch run when nothing else matches.
+ *  Kept as a module-level constant so the array identity is stable
+ *  across renders (ha-selector re-runs its options-changed lifecycle
+ *  when the array reference changes). */
 const COMPARATOR_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '', label: '(else)' },
-  { value: 'lt', label: '<' },
-  { value: 'lte', label: '≤' },
-  { value: 'gt', label: '>' },
-  { value: 'gte', label: '≥' },
-  { value: 'eq', label: '=' },
+  { value: 'lt', label: '< Less than' },
+  { value: 'lte', label: '≤ Less than or equal' },
+  { value: 'gt', label: '> Greater than' },
+  { value: 'gte', label: '≥ Greater than or equal' },
+  { value: 'eq', label: '= Equal to' },
 ];
 
 @customElement('smart-icons-rule-editor')
@@ -109,6 +116,7 @@ export class SmartIconsRuleEditor extends LitElement {
       'ha-switch',
       'ha-sortable',
       'ha-icon',
+      'ha-code-editor',
     ]) {
       if (!customElements.get(tag)) {
         void customElements
@@ -343,23 +351,14 @@ export class SmartIconsRuleEditor extends LitElement {
     `;
   }
 
-  /** Mode dropdown using ha-selector's select config. For legacy rules
-   *  already in template mode, the dropdown includes a deprecated
-   *  "Template" entry so the current value stays visible (and editable
-   *  to switch out of it); new rules can only pick mapping or
-   *  thresholds. The selector requires `.label` to render its
-   *  floating-label layout (see docs/ha-elements-guide.md). */
+  /** Mode dropdown using ha-selector's select config. The selector
+   *  requires `.label` to render its floating-label layout (see
+   *  docs/ha-elements-guide.md). */
   private renderModeSelector() {
     const options: { value: string; label: string }[] = [
       { value: 'mapping', label: 'Mapping (exact state → decoration)' },
       { value: 'thresholds', label: 'Thresholds (numeric ranges)' },
     ];
-    if (this.working.mode === 'template') {
-      options.push({
-        value: 'template',
-        label: 'Template (deprecated — edit existing rules only)',
-      });
-    }
     return html`
       <ha-selector
         .hass=${this.hass}
@@ -391,18 +390,28 @@ export class SmartIconsRuleEditor extends LitElement {
       ${this.codeError
         ? html`<div class="inline-error" role="alert">${this.codeError}</div>`
         : null}
-      <!-- Per-rule YAML editor — bare textarea per
-           docs/ha-elements-guide.md decision tree, item 4. -->
-      <textarea
+      <!-- Per-rule YAML editor — ha-code-editor is HA's canonical
+           YAML/code surface (CodeMirror 6 underneath). Used by the
+           automation editor, blueprint inspector, trace viewer, etc.
+           Lazy-loaded chunk: connectedCallback registers a
+           whenDefined upgrade so we re-render once it lands. -->
+      <ha-code-editor
         class="yaml-area"
+        mode="yaml"
+        autocomplete-entities
+        autocomplete-icons
+        disable-fullscreen
+        dir="ltr"
+        .hass=${this.hass}
         .value=${this.codeText}
-        @input=${(e: Event) => {
-          this.codeText = (e.target as HTMLTextAreaElement).value;
+        @value-changed=${(e: CustomEvent<{ value: string }>) => {
+          this.codeText = e.detail?.value ?? '';
           // Clear any prior parse error as soon as the user types;
           // we'll re-validate on toggle or save.
           if (this.codeError) this.codeError = '';
         }}
-      ></textarea>
+        @editor-save=${this.save}
+      ></ha-code-editor>
     `;
   }
 
@@ -466,9 +475,7 @@ export class SmartIconsRuleEditor extends LitElement {
         </div>
         ${this.working.mode === 'thresholds'
           ? this.renderThresholds()
-          : this.working.mode === 'mapping'
-            ? this.renderMapping()
-            : this.renderTemplate()}
+          : this.renderMapping()}
         ${this.modeError
           ? html`<div class="inline-error">${this.modeError}</div>`
           : null}
@@ -546,7 +553,6 @@ export class SmartIconsRuleEditor extends LitElement {
       mode: (p.mode ?? 'mapping') as RuleMode,
       thresholds: p.thresholds,
       mapping: p.mapping,
-      template: p.template,
       enabled: p.enabled ?? true,
       priority: p.priority ?? 10,
       created: '',
@@ -601,19 +607,34 @@ export class SmartIconsRuleEditor extends LitElement {
 
   private get modeError(): string | null {
     if (this.working.mode === 'thresholds') {
-      const hasEntries = this.working.thresholds.some(
+      // An entry is "meaningful" if it sets a comparator OR any of the
+      // decoration fields. v0.2 missed bg, and the comparator check
+      // was `!== null` against a function that returns '' for none —
+      // so every row, even blank, looked meaningful. This is the fix.
+      const hasMeaningfulEntry = this.working.thresholds.some(
         (t) =>
-          this.thresholdComparator(t) !== null || t.color || t.icon
+          this.thresholdComparator(t) !== '' ||
+          t.color ||
+          t.background_color ||
+          t.icon,
       );
-      if (!hasEntries) return 'Thresholds mode needs at least one entry.';
+      if (!hasMeaningfulEntry) {
+        return 'Thresholds mode needs at least one entry.';
+      }
     } else if (this.working.mode === 'mapping') {
-      const hasKey = this.working.mapping.some(
-        (m) => m.key.trim().length > 0
+      // A mapping row must both have a key AND set at least one
+      // decoration field. A key-only row would round-trip as
+      // `mapping["on"] = {}`, which validates server-side but does
+      // nothing at runtime (the evaluator's _normalize_decoration
+      // returns null for an empty dict). Rejecting it here keeps the
+      // UI honest.
+      const hasMeaningfulEntry = this.working.mapping.some(
+        (m) =>
+          m.key.trim().length > 0 &&
+          (m.color || m.background_color || m.icon),
       );
-      if (!hasKey) return 'Mapping mode needs at least one state → decoration entry.';
-    } else if (this.working.mode === 'template') {
-      if (!this.working.template.trim()) {
-        return 'Template mode requires a non-empty Jinja template.';
+      if (!hasMeaningfulEntry) {
+        return 'Mapping mode needs at least one state → decoration entry (key + color, background, or icon).';
       }
     }
     return null;
@@ -714,40 +735,54 @@ export class SmartIconsRuleEditor extends LitElement {
                 <ha-icon icon="mdi:drag"></ha-icon>
               </div>
               <div class="threshold-row-fields">
-                <ha-selector
-                  .hass=${this.hass}
-                  .selector=${{
-                    select: {
-                      options: COMPARATOR_OPTIONS,
-                      mode: 'dropdown',
-                    },
-                  }}
-                  .value=${this.thresholdComparator(t)}
-                  .label=${'Comparator'}
-                  @value-changed=${(e: CustomEvent<{ value: string }>) =>
-                    this.setThresholdComparator(idx, e.detail?.value ?? '')}
-                ></ha-selector>
-                <ha-input
-                  label="Value"
-                  .value=${this.thresholdValue(t)}
-                  ?disabled=${this.thresholdComparator(t) === ''}
-                  @input=${(e: Event) =>
-                    this.setThresholdValue(
-                      idx,
-                      (e.target as HTMLInputElement).value
-                    )}
-                ></ha-input>
-                ${this.renderColorInput(t.color ?? '', (v) =>
-                  this.updateThreshold(idx, { color: v })
+                <!-- Row 1: comparator dropdown + value on the same
+                     line so the test reads naturally ("< 32"). -->
+                <div class="threshold-comparator-row">
+                  <ha-selector
+                    .hass=${this.hass}
+                    .selector=${{
+                      select: {
+                        options: COMPARATOR_OPTIONS,
+                        mode: 'dropdown',
+                      },
+                    }}
+                    .value=${this.thresholdComparator(t)}
+                    .label=${'Comparator'}
+                    @value-changed=${(e: CustomEvent<{ value: string }>) =>
+                      this.setThresholdComparator(idx, e.detail?.value ?? '')}
+                  ></ha-selector>
+                  <ha-input
+                    label="Value"
+                    .value=${this.thresholdValue(t)}
+                    ?disabled=${this.thresholdComparator(t) === ''}
+                    @input=${(e: Event) =>
+                      this.setThresholdValue(
+                        idx,
+                        (e.target as HTMLInputElement).value
+                      )}
+                  ></ha-input>
+                </div>
+                <!-- Row 2: icon color + background color side by side
+                     so the visual pair is obvious. The painter applies
+                     style.color for the icon and background-color +
+                     border-radius + box-shadow for the chip. -->
+                ${this.renderColorPair(
+                  t.color ?? '',
+                  t.background_color ?? '',
+                  (v) => this.updateThreshold(idx, { color: v }),
+                  (v) => this.updateThreshold(idx, { background_color: v }),
                 )}
                 ${this.renderIconField(t.icon ?? '', (v) =>
                   this.updateThreshold(idx, { icon: v })
                 )}
-                <button
-                  class="btn-icon"
+                <ha-button
+                  class="row-delete"
+                  variant="danger"
                   @click=${() => this.removeThreshold(idx)}
-                  title="Remove"
-                >×</button>
+                >
+                  <ha-icon icon="mdi:delete" slot="start"></ha-icon>
+                  Delete
+                </ha-button>
               </div>
             </div>
           `
@@ -809,7 +844,11 @@ export class SmartIconsRuleEditor extends LitElement {
           : null}
         ${entries.map(
           (m, idx) => html`
-            <div class="row">
+            <!-- Mapping rows mirror the threshold-row layout: a
+                 single column-flex container holds the State input,
+                 the color pair, the icon picker, and a row-level
+                 Delete button (right-aligned at the bottom). -->
+            <div class="mapping-row">
               <ha-input
                 label="State"
                 .value=${m.key}
@@ -818,20 +857,23 @@ export class SmartIconsRuleEditor extends LitElement {
                     key: (e.target as HTMLInputElement).value,
                   })}
               ></ha-input>
-              ${this.renderColorInput(m.color, (v) =>
-                this.updateMapping(idx, { color: v })
+              ${this.renderColorPair(
+                m.color,
+                m.background_color,
+                (v) => this.updateMapping(idx, { color: v }),
+                (v) => this.updateMapping(idx, { background_color: v }),
               )}
               ${this.renderIconField(m.icon, (v) =>
                 this.updateMapping(idx, { icon: v })
               )}
-              <!-- Row-delete affordance — bare button per
-                   docs/ha-elements-guide.md decision tree, item 4
-                   (icon-button-style affordance, not a primary action). -->
-              <button
-                class="btn-icon"
+              <ha-button
+                class="row-delete"
+                variant="danger"
                 @click=${() => this.removeMapping(idx)}
-                title="Remove"
-              >×</button>
+              >
+                <ha-icon icon="mdi:delete" slot="start"></ha-icon>
+                Delete
+              </ha-button>
             </div>
           `
         )}
@@ -843,38 +885,20 @@ export class SmartIconsRuleEditor extends LitElement {
     `;
   }
 
-  private renderTemplate() {
-    // Reachable only for legacy rules already stored with mode='template'.
-    // The mode dropdown no longer offers template as a new-rule choice —
-    // template-mode runtime evaluation is demand-driven (see TODO.md).
-    // We still render the field so existing rules can be inspected and
-    // their string round-trips through save/load without loss.
-    return html`
-      <fieldset>
-        <legend>
-          Template mode (deprecated — storage-only). Runtime evaluation
-          is demand-driven; see TODO.md.
-        </legend>
-        <ha-input
-          label="Template"
-          placeholder='{{ "#ff0000" if is_state(...) else "inherit" }}'
-          .value=${this.working.template}
-          @input=${(e: Event) =>
-            this.patch({
-              template: (e.target as HTMLInputElement).value,
-            })}
-        ></ha-input>
-      </fieldset>
-    `;
-  }
-
-  private renderColorInput(value: string, onChange: (v: string) => void) {
+  private renderColorInput(
+    value: string,
+    onChange: (v: string) => void,
+    label = 'Color',
+  ) {
     return html`
       <div class="swatch-input">
         <!-- Native <input type="color"> per docs/ha-elements-guide.md
              decision tree, item 4: HA has no first-class hex color
              picker, and the native swatch is the most reliable
-             cross-version solution. -->
+             cross-version solution. The text field next to it
+             accepts any CSS color string (hex, rgb(), rgba(), hsl(),
+             var(--…), named) — useful when the swatch's hex-only
+             limit isn't enough (e.g. translucent rgba chips). -->
         <input
           type="color"
           .value=${this.colorAsHex(value)}
@@ -883,8 +907,8 @@ export class SmartIconsRuleEditor extends LitElement {
           title="Pick a color"
         />
         <ha-input
-          label="Color"
-          placeholder="#hex, name, or var(--…)"
+          label=${label}
+          placeholder="#hex, rgba(), name, var(--…)"
           .value=${value}
           @input=${(e: Event) =>
             onChange((e.target as HTMLInputElement).value)}
@@ -893,8 +917,33 @@ export class SmartIconsRuleEditor extends LitElement {
     `;
   }
 
+  /** Render a foreground/background color pair on a single row.
+   *  Background (chip) is optional — empty string means "no chip" and
+   *  the painter applies the icon's painted color without any
+   *  surrounding circle. */
+  private renderColorPair(
+    fg: string,
+    bg: string,
+    onFgChange: (v: string) => void,
+    onBgChange: (v: string) => void,
+  ) {
+    return html`
+      <div class="color-pair">
+        ${this.renderColorInput(fg, onFgChange, 'Icon color')}
+        ${this.renderColorInput(bg, onBgChange, 'Background')}
+      </div>
+    `;
+  }
+
   /** Convert any CSS color string to a hex the native picker accepts.
-   *  Falls back to #888888 for inputs the browser can't resolve. */
+   *  Falls back to #888888 for inputs the browser can't resolve.
+   *
+   *  For translucent inputs (rgba / hsla with alpha < 1) canvas
+   *  `fillStyle` returns the rgba() form, not hex. We parse the RGB
+   *  part out and hex-encode it so the swatch picker can at least
+   *  show the opaque equivalent — the alpha is conveyed by the
+   *  text field next to the swatch, not the swatch itself
+   *  (HTML's <input type="color"> is hex-only by spec). */
   private colorAsHex(v: string): string {
     if (!v) return '#888888';
     if (/^#[0-9a-fA-F]{6}$/.test(v)) return v;
@@ -913,7 +962,19 @@ export class SmartIconsRuleEditor extends LitElement {
       if (!ctx) return '#888888';
       ctx.fillStyle = v;
       const out = ctx.fillStyle;
-      return /^#[0-9a-fA-F]{6}$/.test(out) ? out : '#888888';
+      if (/^#[0-9a-fA-F]{6}$/.test(out)) return out;
+      // Canvas returns rgba()/rgb() for translucent or
+      // odd-but-resolved inputs. Extract the RGB triple and hex
+      // it ourselves — drops the alpha for swatch-display only.
+      const m = /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)/.exec(
+        out,
+      );
+      if (m) {
+        const hex = (n: string): string =>
+          Math.round(Number(n)).toString(16).padStart(2, '0');
+        return `#${hex(m[1])}${hex(m[2])}${hex(m[3])}`;
+      }
+      return '#888888';
     } catch {
       return '#888888';
     }
@@ -954,11 +1015,11 @@ export class SmartIconsRuleEditor extends LitElement {
         ? Object.entries(rule.mapping).map(([key, dec]) => ({
             key,
             color: (dec as Decoration).color ?? '',
+            background_color: (dec as Decoration).background_color ?? '',
             icon: (dec as Decoration).icon ?? '',
             _key: nextKey(),
           }))
         : [],
-      template: rule.template ?? '',
       enabled: rule.enabled,
       priority: rule.priority,
     };
@@ -972,8 +1033,9 @@ export class SmartIconsRuleEditor extends LitElement {
       source_attribute: '',
       mode: 'mapping',
       thresholds: [],
-      mapping: [{ key: '', color: '', icon: '', _key: nextKey() }],
-      template: '',
+      mapping: [
+        { key: '', color: '', background_color: '', icon: '', _key: nextKey() },
+      ],
       enabled: true,
       priority: 10,
     };
@@ -1196,7 +1258,13 @@ export class SmartIconsRuleEditor extends LitElement {
       ...this.working,
       thresholds: [
         ...this.working.thresholds,
-        { lt: 0, color: '', icon: '', _key: nextKey() },
+        {
+          lt: 0,
+          color: '',
+          background_color: '',
+          icon: '',
+          _key: nextKey(),
+        },
       ],
     };
   };
@@ -1212,7 +1280,12 @@ export class SmartIconsRuleEditor extends LitElement {
 
   private updateMapping(
     idx: number,
-    patch: Partial<{ key: string; color: string; icon: string }>
+    patch: Partial<{
+      key: string;
+      color: string;
+      background_color: string;
+      icon: string;
+    }>
   ): void {
     this.working = {
       ...this.working,
@@ -1227,7 +1300,13 @@ export class SmartIconsRuleEditor extends LitElement {
       ...this.working,
       mapping: [
         ...this.working.mapping,
-        { key: '', color: '', icon: '', _key: nextKey() },
+        {
+          key: '',
+          color: '',
+          background_color: '',
+          icon: '',
+          _key: nextKey(),
+        },
       ],
     };
   };
@@ -1304,6 +1383,7 @@ export class SmartIconsRuleEditor extends LitElement {
           }
         }
         if (t.color) cleaned.color = t.color;
+        if (t.background_color) cleaned.background_color = t.background_color;
         if (t.icon) cleaned.icon = t.icon;
         return cleaned;
       });
@@ -1311,14 +1391,21 @@ export class SmartIconsRuleEditor extends LitElement {
       const mapping: Record<string, Decoration> = {};
       for (const entry of this.working.mapping) {
         if (!entry.key) continue;
+        // Skip key-only rows: serializing them as `{key: {}}` would
+        // pass schema validation but the evaluator returns null for
+        // an empty decoration, so the rule looks present in storage
+        // and YAML but does nothing at runtime. Better to drop the
+        // empty row entirely — the user can re-add it when ready.
+        if (!entry.color && !entry.background_color && !entry.icon) continue;
         const dec: Decoration = {};
         if (entry.color) dec.color = entry.color;
+        if (entry.background_color) {
+          dec.background_color = entry.background_color;
+        }
         if (entry.icon) dec.icon = entry.icon;
         mapping[entry.key] = dec;
       }
       base.mapping = mapping;
-    } else if (this.working.mode === 'template') {
-      base.template = this.working.template;
     }
 
     return base;

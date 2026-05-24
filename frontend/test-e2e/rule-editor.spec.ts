@@ -8,15 +8,14 @@ import { expect, test } from '@playwright/test';
  * to zero height with no console error.
  *
  * Test plan:
- *  1. Panel loads → outline-toggle ha-switch is visible.
- *  2. + Add rule opens the dialog with a non-zero-height form.
- *  3. Mode `ha-selector` shows Mapping / Thresholds options.
- *  4. Mode switch swaps the body between Mapping and Thresholds.
- *  5. Source-attribute / Priority `ha-input` fields render.
- *  6. Add-row `ha-button` controls render and respond.
- *  7. Color picker swatch + hex `ha-input` coexist.
- *  8. Per-rule YAML toggle still works (the bare-textarea path).
- *  9. Cancel closes the dialog without persisting.
+ *  1. + Add rule opens the dialog with a non-zero-height form.
+ *  2. Mode `ha-selector` shows Mapping / Thresholds options.
+ *  3. Mode switch swaps the body between Mapping and Thresholds.
+ *  4. Source-attribute / Priority `ha-input` fields render.
+ *  5. Add-row `ha-button` controls render and respond.
+ *  6. Color picker swatch + hex `ha-input` coexist.
+ *  7. Per-rule YAML toggle still works (the bare-textarea path).
+ *  8. Cancel closes the dialog without persisting.
  */
 
 const PANEL_URL = '/smart-icons';
@@ -40,18 +39,6 @@ test.describe('Smart Icons panel — rule editor (v0.3.0a2)', () => {
       () => Boolean(customElements.get('smart-icons-panel')),
       { timeout: 30_000 },
     );
-  });
-
-  test('panel renders with the outline-toggle ha-switch visible', async ({ page }) => {
-    // The outline toggle's ha-switch should be present and have a
-    // non-zero bounding box. If ha-switch didn't register, the box
-    // would be empty (zero height).
-    const switchHandle = page.locator(`${PANEL} ha-switch`).first();
-    await expect(switchHandle).toBeVisible({ timeout: 10_000 });
-    const box = await switchHandle.boundingBox();
-    expect(box, 'ha-switch must have a non-zero bounding box').not.toBeNull();
-    expect(box!.height).toBeGreaterThan(8);
-    expect(box!.width).toBeGreaterThan(8);
   });
 
   test('+ Add rule opens the editor with non-zero form sections', async ({ page }) => {

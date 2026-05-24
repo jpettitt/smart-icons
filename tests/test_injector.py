@@ -11,6 +11,7 @@ import pytest
 
 from custom_components.smart_icons.const import (
     ATTR_ICON,
+    ATTR_SMART_ICONS_BACKGROUND,
     ATTR_SMART_ICONS_COLOR,
     DATA_INJECTOR,
     DATA_STORE,
@@ -78,9 +79,10 @@ async def test_injector_reacts_to_source_state_change(
     await hass.async_block_till_done()
 
     state = hass.states.get("light.kitchen")
-    # _else has only a color, no icon — icon stays at the previous value
-    # (we don't touch icon when the new winner doesn't set one).
+    # _else has only a color, no icon — and the icon we last wrote
+    # (mdi:movie-open) is now cleared, so HA falls back to its default.
     assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#cccccc"
+    assert ATTR_ICON not in state.attributes
 
 
 async def test_injector_handles_threshold_rules(
@@ -118,8 +120,11 @@ async def test_injector_releases_color_on_rule_deletion(
     await store.async_delete(rule.id)
     await hass.async_block_till_done()
 
-    assert ATTR_SMART_ICONS_COLOR not in hass.states.get("light.kitchen").attributes
-    # Icon is intentionally NOT restored — documented trade-off.
+    state = hass.states.get("light.kitchen")
+    assert ATTR_SMART_ICONS_COLOR not in state.attributes
+    # Icon attribute is also cleared — HA falls back to the
+    # domain/device-class default after our value is popped.
+    assert ATTR_ICON not in state.attributes
 
 
 async def test_injector_priority_resolution(
@@ -496,8 +501,351 @@ async def test_injector_no_op_when_rule_disabled(
     rule = await store.async_upsert(_mapping_rule())
     await hass.async_block_till_done()
     assert ATTR_SMART_ICONS_COLOR in hass.states.get("light.kitchen").attributes
+    assert hass.states.get("light.kitchen").attributes[ATTR_ICON] == "mdi:movie-open"
 
-    # Disable the rule — should release the color.
+    # Disable the rule — should release both color and icon.
     await store.async_upsert({**rule.to_dict(), "enabled": False})
     await hass.async_block_till_done()
-    assert ATTR_SMART_ICONS_COLOR not in hass.states.get("light.kitchen").attributes
+    state = hass.states.get("light.kitchen")
+    assert ATTR_SMART_ICONS_COLOR not in state.attributes
+    assert ATTR_ICON not in state.attributes
+
+
+async def test_injector_clears_icon_when_rule_drops_icon_field(
+    hass, config_entry  # noqa: ARG001
+):
+    """Editing a rule to remove the `icon` field should clear the
+    previously-written icon attribute on the next evaluation. This is
+    the on-edit half of the icon-clear contract — the on-delete half
+    is covered by test_injector_releases_color_on_rule_deletion."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    rule = await store.async_upsert(_mapping_rule())
+    await hass.async_block_till_done()
+    assert hass.states.get("light.kitchen").attributes[ATTR_ICON] == "mdi:movie-open"
+
+    # Edit the rule: drop the icon from the "movie" mapping entry.
+    edited = rule.to_dict()
+    edited["mapping"] = {
+        "movie": {"color": "#000000"},
+        "_else": {"color": "#cccccc"},
+    }
+    await store.async_upsert(edited)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#000000"
+    assert ATTR_ICON not in state.attributes
+
+
+async def test_injector_writes_background_color_attribute(
+    hass, config_entry  # noqa: ARG001
+):
+    """A rule with background_color writes ATTR_SMART_ICONS_BACKGROUND
+    onto the target — the painter reads it to render the chip."""
+    hass.states.async_set("input_select.scene", "highlight")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {
+                "highlight": {
+                    "color": "#ffff00",
+                    "background_color": "#43a047",
+                },
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#ffff00"
+    assert state.attributes[ATTR_SMART_ICONS_BACKGROUND] == "#43a047"
+
+
+async def test_injector_writes_bg_only_without_color(
+    hass, config_entry  # noqa: ARG001
+):
+    """A bg-only rule writes ATTR_SMART_ICONS_BACKGROUND but no
+    ATTR_SMART_ICONS_COLOR — the painter renders a chip with the
+    icon's natural color."""
+    hass.states.async_set("input_select.scene", "highlight")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"highlight": {"background_color": "#43a047"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_SMART_ICONS_BACKGROUND] == "#43a047"
+    assert ATTR_SMART_ICONS_COLOR not in state.attributes
+
+
+async def test_injector_clears_background_when_rule_drops_bg_field(
+    hass, config_entry  # noqa: ARG001
+):
+    """Editing a rule to remove `background_color` pops the attribute
+    on the next evaluation. Symmetric with the color-clear behavior."""
+    hass.states.async_set("input_select.scene", "highlight")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    rule = await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {
+                "highlight": {
+                    "color": "#ffff00",
+                    "background_color": "#43a047",
+                },
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert (
+        hass.states.get("light.kitchen").attributes[ATTR_SMART_ICONS_BACKGROUND]
+        == "#43a047"
+    )
+
+    # Edit: drop the background_color, keep the color.
+    edited = rule.to_dict()
+    edited["mapping"] = {"highlight": {"color": "#ffff00"}}
+    await store.async_upsert(edited)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#ffff00"
+    assert ATTR_SMART_ICONS_BACKGROUND not in state.attributes
+
+
+async def test_injector_releases_background_on_rule_deletion(
+    hass, config_entry  # noqa: ARG001
+):
+    hass.states.async_set("input_select.scene", "highlight")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+    rule = await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"highlight": {"background_color": "#43a047"}},
+        }
+    )
+    await hass.async_block_till_done()
+    assert (
+        ATTR_SMART_ICONS_BACKGROUND
+        in hass.states.get("light.kitchen").attributes
+    )
+
+    await store.async_delete(rule.id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert ATTR_SMART_ICONS_BACKGROUND not in state.attributes
+
+
+async def test_injector_field_level_merge_across_priorities(
+    hass, config_entry  # noqa: ARG001
+):
+    """The v0.3 field-level merger: a high-priority bg-only rule + a
+    low-priority color rule coexist — the bg comes from the high rule,
+    the color from the low rule, neither erases the other."""
+    hass.states.async_set("input_select.scene", "highlight")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    # Low-priority color + icon.
+    await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "priority": 10,
+            "mode": "mapping",
+            "mapping": {
+                "highlight": {"color": "#ffff00", "icon": "mdi:star"},
+            },
+        }
+    )
+    # High-priority bg-only.
+    await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "priority": 99,
+            "mode": "mapping",
+            "mapping": {"highlight": {"background_color": "#43a047"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    # Color + icon survive from the low-priority rule.
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#ffff00"
+    assert state.attributes[ATTR_ICON] == "mdi:star"
+    # bg from the high-priority rule.
+    assert state.attributes[ATTR_SMART_ICONS_BACKGROUND] == "#43a047"
+
+
+async def test_injector_caches_glob_resolution_between_state_changes(
+    hass, config_entry  # noqa: ARG001
+):
+    """The resolved-target cache is hit on subsequent reads inside a
+    state-change burst — important for performance on large installs
+    where fnmatch.filter against thousands of entity ids would
+    otherwise run per rule per source-change."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen_main", "on")
+    hass.states.async_set("light.kitchen_under_cabinet", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    rule = await store.async_upsert(
+        {
+            "targets": ["light.kitchen_*"],
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#001144"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    injector = hass.data[DOMAIN][DATA_INJECTOR]
+    # First read of _resolve_targets seeded the cache; assert the
+    # rule id is keyed in the resolution cache.
+    assert rule.id in injector._resolved_cache
+    cached_before = injector._resolved_cache[rule.id]
+    assert "light.kitchen_main" in cached_before
+    assert "light.kitchen_under_cabinet" in cached_before
+
+    # State change on the source triggers _on_source_state_change →
+    # _targets_for_source → _resolve_targets. The cached set should be
+    # reused (same object identity), not recomputed.
+    hass.states.async_set("input_select.scene", "party")
+    await hass.async_block_till_done()
+    assert injector._resolved_cache[rule.id] is cached_before
+
+
+async def test_injector_invalidates_cache_on_rule_update(
+    hass, config_entry  # noqa: ARG001
+):
+    """Editing a rule's targets list drops just that rule's cached
+    resolution — the next read recomputes against the new glob."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen_main", "on")
+    hass.states.async_set("light.bedroom_main", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+    injector = hass.data[DOMAIN][DATA_INJECTOR]
+
+    rule = await store.async_upsert(
+        {
+            "targets": ["light.kitchen_*"],
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#001144"}},
+        }
+    )
+    await hass.async_block_till_done()
+    assert injector._resolved_cache[rule.id] == {"light.kitchen_main"}
+
+    # Widen the glob via an update.
+    await store.async_upsert(
+        {
+            **rule.to_dict(),
+            "targets": ["light.kitchen_*", "light.bedroom_*"],
+        }
+    )
+    await hass.async_block_till_done()
+    # New resolution must include the bedroom match — confirms the
+    # stale cached entry was dropped and recomputed.
+    assert (
+        injector._resolved_cache[rule.id]
+        == {"light.kitchen_main", "light.bedroom_main"}
+    )
+    assert (
+        hass.states.get("light.bedroom_main").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#001144"
+    )
+
+
+async def test_injector_invalidates_glob_cache_when_new_entity_appears(
+    hass, config_entry  # noqa: ARG001
+):
+    """When a new entity appears in the state machine that matches a
+    glob, the cache for glob rules must be dropped so the next
+    resolution picks up the newly-eligible entity."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen_main", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+    injector = hass.data[DOMAIN][DATA_INJECTOR]
+
+    rule = await store.async_upsert(
+        {
+            "targets": ["light.kitchen_*"],
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#001144"}},
+        }
+    )
+    await hass.async_block_till_done()
+    assert injector._resolved_cache[rule.id] == {"light.kitchen_main"}
+
+    # A new matching entity appears — the integration that owns it
+    # finally published its state. The handler should invalidate
+    # the cache, re-resolve, paint the new entity.
+    hass.states.async_set("light.kitchen_pantry", "on")
+    await hass.async_block_till_done()
+    assert "light.kitchen_pantry" in injector._resolved_cache[rule.id]
+    assert (
+        hass.states.get("light.kitchen_pantry").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#001144"
+    )
+
+
+async def test_injector_does_not_clobber_source_overwritten_icon(
+    hass, config_entry  # noqa: ARG001
+):
+    """If the source integration replaces our icon with its own value
+    between our write and our clear, we must NOT pop that value — only
+    our own writes are ours to clean up. This is the safety guarantee
+    that lets _release_target be aggressive about icon-clearing."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    rule = await store.async_upsert(_mapping_rule())
+    await hass.async_block_till_done()
+    assert hass.states.get("light.kitchen").attributes[ATTR_ICON] == "mdi:movie-open"
+
+    # Simulate the source integration pushing a fresh state with its
+    # own icon. (In production this happens when the upstream
+    # integration republishes attributes.) The injector hasn't been
+    # told about this — it still believes "we last wrote mdi:movie-open."
+    hass.states.async_set(
+        "light.kitchen",
+        "on",
+        {ATTR_ICON: "mdi:source-owned-icon"},
+    )
+    await hass.async_block_till_done()
+
+    # Now delete our rule. The icon attribute is no longer "ours" —
+    # current value differs from what we recorded — so we leave it.
+    await store.async_delete(rule.id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_ICON] == "mdi:source-owned-icon"

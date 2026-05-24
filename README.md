@@ -1,19 +1,21 @@
 # Smart Icons
 
-Drive any Home Assistant entity's icon **color** and/or **glyph** from any
-other entity's state — thresholds, mappings, or (in v0.3) Jinja templates —
-applied across the default Lovelace cards without per-card configuration.
+Drive any Home Assistant entity's icon **color**, **glyph**, and
+**background chip** from any other entity's state — thresholds,
+mappings, or (in v0.3) Jinja templates — applied across the default
+Lovelace cards without per-card configuration.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://hacs.xyz)
 [![Release](https://img.shields.io/github/v/release/jpettitt/smart-icons?include_prereleases&style=for-the-badge)](https://github.com/jpettitt/smart-icons/releases)
 [![License](https://img.shields.io/github/license/jpettitt/smart-icons?style=for-the-badge)](LICENSE)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
 
-> **Status:** v0.2.2 — GA. v0.3 is in progress on a feature branch:
-> contrasting auto-luminance outline on painted icons + installation-wide
-> admin toggle. See [CHANGELOG.md](CHANGELOG.md) for the in-progress
-> Unreleased entry and [`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md)
-> for the design rationale.
+> **Status:** v0.2.2 — GA. v0.3 is in progress on `feature/icon-bg-circle`:
+> per-rule Mushroom-style background chip + field-level rule merging.
+> See [CHANGELOG.md](CHANGELOG.md) for the v0.3.0a3 entry. The
+> contrasting-outline approach explored earlier in the v0.3 cycle was
+> abandoned ([rationale](docs/icon-outline-prototype-results.md)) when
+> the chip approach proved cleaner.
 >
 > Template-mode evaluation, originally on the v0.3 roadmap, has been
 > demoted to demand-driven — rule stacking (priority + selective
@@ -65,18 +67,24 @@ and [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 A custom integration stores rules in HA's normal storage and exposes a
 WebSocket API. An `IconInjector` subscribes to the source entities'
-`state_changed` events, evaluates the matching rules in Python, and writes
-two attributes onto each target entity:
+`state_changed` events, merges every rule that matches each target in
+priority order, and writes the result onto the target's state attributes:
 
 - `icon` — HA's standard glyph attribute, read natively by every
   `<ha-state-icon>` instance with no frontend cooperation needed.
-- `smart_icons_color` — our namespaced color hint. A tiny painter bundle
-  (~3 KB, loaded on every Lovelace page) bridges this attribute to inline
+- `smart_icons_color` — our namespaced color hint. The painter bundle
+  (~5 KB, loaded on every Lovelace page) bridges this to inline
   `style.color` on each icon host.
+- `smart_icons_background` — Mushroom-style chip color (v0.3+).
+  When set, the painter renders a colored circle behind the icon via
+  `background-color` + `border-radius: 50%` + an inset `box-shadow`
+  ring on the host. Independent of `smart_icons_color`: either, both,
+  or neither may be set per rule.
 
 Because the glyph swap rides HA's native render path, it survives Lovelace
-view switches, dashboard reloads, and reaches the mobile apps. The color
-painter is the only piece that touches the DOM.
+view switches, dashboard reloads, and reaches the mobile apps. The
+painter is the only piece that touches the DOM, and it only owns the
+inline color / background slots on hosts it has marked as decorated.
 
 ## Install
 
@@ -117,8 +125,14 @@ Each rule has:
   state (e.g. `azimuth` on `sun.sun`).
 - **Mode** — `mapping` (exact state → decoration), `thresholds`
   (numeric ranges), or `template` (storage only in v0.2, runtime in v0.3).
-- **Priority** — when several rules target the same entity, the highest-
-  priority enabled rule wins.
+- **Priority** — when several rules target the same entity, fields
+  are merged in priority order. The highest-priority enabled rule
+  that addresses a given field (color, icon, or background) wins
+  that field; lower-priority rules fill in fields the winner didn't
+  touch. A bg-only highlight rule on top of a color-by-state rule
+  keeps both effects. Explicit `null` / `""` / `"inherit"` / `"unset"`
+  in a high-priority rule blocks lower rules from contributing that
+  field (v0.3+; see [DESIGN.md § 4.2](DESIGN.md#42-decorations-and-the-priority-merge) for the full semantic).
 
 Example: recolor every kitchen light by its own brightness.
 
@@ -141,16 +155,26 @@ its own `brightness`.)
 For more ready-to-paste rules covering common entity types, see
 [docs/examples.md](docs/examples.md).
 
-### Contrasting outline (v0.3+)
+### Background chips (v0.3+)
 
-Every icon Smart Icons paints gets a thin contrasting outline
-(black or white, auto-picked for contrast against the painted
-color) so the glyph stays readable even when the painted color is
-close to the card background — see the screenshots in
-[`docs/icon-outline-prototype-results.md`](docs/icon-outline-prototype-results.md).
-On by default. Disable from the *Contrasting outline on painted
-icons* checkbox in the Smart Icons panel if your theme prefers
-unstyled icons.
+A rule can decorate an icon with a colored circular background chip,
+in the Mushroom card style, by setting `background_color` on a
+mapping entry or threshold entry. The chip accepts any CSS color
+string — hex, `rgb()`, `rgba()` for translucency, named colors,
+`var(--…)` references. Either `color`, `background_color`, both, or
+neither may be set per rule; a chip-only rule leaves the icon's
+natural color alone.
+
+```jsonc
+{
+  "targets": ["binary_sensor.front_door_motion"],
+  "mode": "mapping",
+  "mapping": {
+    "on":  { "color": "#ffeb3b", "background_color": "#b71c1c" },
+    "off": {                      "background_color": "#1b5e20" }
+  }
+}
+```
 
 ## Compatibility
 
@@ -165,21 +189,42 @@ unstyled icons.
 
 ## Roadmap
 
-- **v0.3** — Contrasting auto-luminance outline on painted icons +
-  installation-wide admin toggle (in progress on `feature/icon-outline-proto`);
+- **v0.3** — Mushroom-style per-rule background chip
+  (`background_color` on mapping / threshold entries); field-level
+  rule merging (highest-priority value wins per field, not per rule);
   Door 1 (entity settings dialog injection); translations framework.
-- **v0.4+** — Drag-reorder priority in the panel, import/export, icon-pack
-  picker, optional opacity decoration. `_inherit` decoration values (so
-  stacked rules can change one field and inherit the other) is under
-  consideration.
-- **Demand-driven** — Template-mode evaluation; "outline every icon"
-  mode (vs. just painted icons). Both are parked unless real users
-  ask for them — rule stacking already covers the common
-  template-mode use cases (see [`docs/examples.md`](docs/examples.md)),
-  and the painted-only outline scope avoids conflicts with Mushroom /
-  card-mod / theme styling.
+- **v0.4+** — Drag-reorder priority in the panel, import/export,
+  icon-pack picker, optional opacity decoration.
+- **Demand-driven** — Template-mode evaluation. Parked unless real
+  users ask for it — rule stacking already covers the common
+  template-mode use cases (see [`docs/examples.md`](docs/examples.md)).
 
 Full backlog: [TODO.md](TODO.md) and [DESIGN.md § 11](DESIGN.md#11-roadmap).
+
+## Notes for integration developers
+
+Smart Icons writes the `icon`, `smart_icons_color`, and
+`smart_icons_background` attributes onto target entities via
+`hass.states.async_set`. These calls fire synthetic `state_changed`
+events with the entity's existing `state` value preserved — only the
+attribute bag changes. Implications:
+
+- **Automations that trigger on state *transitions*** are unaffected.
+  HA's standard state-trigger compares `new_state.state` to
+  `old_state.state`; neither changes when we update only attributes.
+- **Listeners that subscribe to raw `state_changed` events** see our
+  synthetic updates. Filter them out with
+  `new_state.state != old_state.state` (state-only listeners) or by
+  checking which attribute keys actually changed (attribute-aware
+  listeners). The injector debounces per-target writes to avoid
+  storming the bus, but rule-eval bursts are still visible.
+- **Other integrations writing the same attributes** are a conflict
+  zone. Smart Icons re-applies its decoration on every relevant
+  state change and tracks the last `icon` it wrote per target so it
+  only clears the icon when the value still matches our last write
+  (source integrations that overwrite with their own icon are left
+  alone). See [DESIGN.md § 7.0](DESIGN.md#70-architecture--server-side-glyph-client-side-color)
+  for the full discussion.
 
 ## Development
 

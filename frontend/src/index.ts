@@ -9,88 +9,20 @@
  * This bundle is loaded on *every* Lovelace page via `add_extra_js_url`
  * and runs for every authenticated HA user — admin or not. The
  * critical paint path is WS-free: rule decorations arrive via
- * `smart_icons_color` on each entity's state attributes, written
- * server-side by the injector, delivered through HA's native state
- * subscription. The painter does NOT call any admin-gated WS command —
- * rule management stays behind the panel chunk.
- *
- * The painter does make two non-admin WS calls at bootstrap (see
- * `wireOptions`): a one-shot `smart_icons/get_options` to read the
- * installation-wide outline preference, and a subscription to the
- * `smart_icons_options_updated` bus event so admin toggles take
- * effect live for every viewer. Both endpoints are intentionally
- * accessible to non-admin users — the option surface is small and
- * exposes no admin-sensitive data.
+ * `smart_icons_color` / `smart_icons_background` on each entity's
+ * state attributes, written server-side by the injector, delivered
+ * through HA's native state subscription. The painter does NOT call
+ * any admin-gated WS command — rule management stays behind the
+ * panel chunk.
  *
  * The panel UI (Door 2) is loaded lazily from a separate module that
  * registers `<smart-icons-panel>` — landing in chunk 2. That chunk is
  * the only one that talks to the admin-gated `smart_icons/*` commands.
  */
 
-import { isOutlineEnabled, setOutlineEnabled } from './outline';
 import { Painter, patchHaStateIcon, type PatchResult } from './painter';
 import { StateWatcher } from './state-watcher';
 import type { Hass } from './types';
-
-const WS_GET_OPTIONS = 'smart_icons/get_options';
-const EVENT_OPTIONS_UPDATED = 'smart_icons_options_updated';
-const OPTION_OUTLINE_ENABLED = 'outline_enabled';
-
-interface SmartIconsOptions {
-  outline_enabled?: boolean;
-  [key: string]: unknown;
-}
-
-/** Read installation-wide options once at bootstrap and subscribe to
- *  future changes via the HA bus event. The `get_options` WS command
- *  is *not* admin-gated (see `websocket_api.py`) precisely because
- *  this painter runs for every authenticated user. The
- *  `smart_icons_options_updated` event is similarly bus-level and
- *  visible to all users.
- *
- *  On any error (WS command rejected, event subscribe rejected) the
- *  module-level default (`outline_enabled = true`) stands, matching
- *  the installation default. Painted icons still appear; only the
- *  ability to *disable* outlines mid-session is lost. */
-async function wireOptions(hass: Hass, painter: Painter): Promise<void> {
-  const apply = (opts: SmartIconsOptions | undefined): void => {
-    if (!opts) return;
-    if (typeof opts[OPTION_OUTLINE_ENABLED] === 'boolean') {
-      const before = isOutlineEnabled();
-      setOutlineEnabled(opts[OPTION_OUTLINE_ENABLED] as boolean);
-      if (before !== opts[OPTION_OUTLINE_ENABLED]) {
-        painter.repaintAll();
-      }
-    }
-  };
-
-  try {
-    const result = await hass.connection.sendMessagePromise<{
-      options: SmartIconsOptions;
-    }>({ type: WS_GET_OPTIONS });
-    apply(result.options);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[smart-icons] could not read options (defaulting to outline on)',
-      err,
-    );
-  }
-
-  try {
-    await hass.connection.subscribeEvents<{ data: SmartIconsOptions }>(
-      (event) => apply(event.data),
-      EVENT_OPTIONS_UPDATED,
-    );
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[smart-icons] could not subscribe to options updates ' +
-        '(option toggles will need a page reload)',
-      err,
-    );
-  }
-}
 
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 30_000;
@@ -177,8 +109,6 @@ async function bootstrap(): Promise<void> {
   };
   // eslint-disable-next-line no-console
   console.log('[smart-icons] painter started');
-
-  await wireOptions(hass, painter);
 
   await watcher.start();
   // watcher.start() is the moment our cache is reliably populated

@@ -1,10 +1,10 @@
 """Pure rule-evaluation functions, mirror of frontend/src/evaluator.ts.
 
 Both implementations must stay in sync — backend evaluation runs in the
-injector to produce icon + color attributes that flow to HA's frontend
-naturally, while the TS evaluator is kept for future panel/preview UI.
-A divergence between them would mean what the painter previews and what
-the integration actually applies disagree.
+injector to produce icon + color + background attributes that flow to
+HA's frontend naturally, while the TS evaluator is kept for future
+panel/preview UI. A divergence between them would mean what the painter
+previews and what the integration actually applies disagree.
 
 Semantics follow DESIGN.md § 4.2:
 - thresholds: first matching entry wins; an entry with no comparator is
@@ -12,12 +12,27 @@ Semantics follow DESIGN.md § 4.2:
   skips that entry.
 - mapping: exact string match; `_else` is the fallback; missing key with
   no `_else` → None.
-- template: storage-only — runtime evaluation is demand-driven
-  (see TODO.md). evaluate_rule returns None for template-mode rules.
 
-"Release sentinels" — `""`, `"inherit"`, `"unset"`, `None` — in either
-decoration field mean "fall back to defaults"; a decoration that ends up
-with both fields released yields None.
+(Template mode existed in v0.2 and the v0.3 alpha line but was always
+inert — runtime evaluation was deferred to "demand-driven." It is
+removed entirely in v0.3.0a3 since no real user demand surfaced.)
+
+Per-field merging (v0.3.0a3): when multiple rules target the same
+entity, fields are layered by priority. The highest-priority rule that
+takes a *position* on a field (color, icon, or background_color) wins
+that field. Lower-priority rules can fill in fields the winner did not
+address — so a high-priority chip-only rule can coexist with a
+low-priority color rule without erasing it. This replaces the v0.2
+"winner takes all" rule, which surprised users once `background_color`
+joined the decoration set.
+
+Two kinds of "position":
+- positive: a non-empty string value the painter should apply
+- release: explicit null / "" / "inherit" / "unset" sentinel — the
+  rule is saying "this field should be cleared, regardless of what
+  lower-priority rules contribute"
+Absence of a field on a rule means "I have no opinion on this field"
+and lets lower-priority rules contribute.
 """
 
 from __future__ import annotations
@@ -33,6 +48,7 @@ from .rule import Rule
 
 _RELEASE_SENTINELS = frozenset({"", "inherit", "unset"})
 _COMPARATORS = ("lt", "lte", "gt", "gte", "eq")
+_DECORATION_FIELDS = ("color", "icon", "background_color")
 
 
 def _normalize_field(value: Any) -> str | None:
@@ -44,13 +60,23 @@ def _normalize_field(value: Any) -> str | None:
 
 
 def _normalize_decoration(d: dict[str, Any] | None) -> dict[str, str | None] | None:
+    """Return the per-field positions this decoration takes.
+
+    Sparse dict: only fields the input dict mentions appear in the
+    output. A field present-but-sentinel maps to None (explicit
+    release); a field present-with-value maps to the value; a field
+    absent from the input is absent from the output (no position).
+
+    Returns None when the input is empty / takes no positions.
+    """
     if not d:
         return None
-    color = _normalize_field(d.get("color"))
-    icon = _normalize_field(d.get("icon"))
-    if color is None and icon is None:
-        return None
-    return {"color": color, "icon": icon}
+    positions: dict[str, str | None] = {}
+    for key in _DECORATION_FIELDS:
+        if key not in d:
+            continue
+        positions[key] = _normalize_field(d[key])
+    return positions or None
 
 
 def _entry_comparator(entry: dict[str, Any]) -> str | None:
@@ -99,9 +125,11 @@ def evaluate_thresholds(
             elif cmp == "gte":
                 matched = numeric >= threshold
         if matched:
-            return _normalize_decoration(
-                {"color": entry.get("color"), "icon": entry.get("icon")}
-            )
+            # Pass the entry directly — _normalize_decoration only
+            # considers keys present in the dict, so absent decoration
+            # fields stay absent (no position) and explicit sentinels
+            # become explicit releases.
+            return _normalize_decoration(entry)
     return None
 
 
@@ -127,25 +155,57 @@ def evaluate_rule(
         return evaluate_thresholds(rule.thresholds, source_state)
     if rule.mode == MODE_MAPPING and rule.mapping:
         return evaluate_mapping(rule.mapping, source_state)
-    # Template mode is storage-only — runtime evaluation deferred to
-    # demand-driven (see TODO.md). Falls through to None.
     return None
 
 
-def pick_winner(
+def merge_decorations(
     rule_decorations: list[tuple[Rule, dict[str, str | None] | None]],
 ) -> dict[str, str | None] | None:
-    """Choose the highest-priority rule with a non-null decoration.
+    """Layer per-rule decoration positions into a single final decoration.
 
-    Equal priorities: first occurrence wins. Matches the TS evaluator's
-    behavior (and matches DESIGN.md's "winner takes all" rule).
+    Highest-priority rule that takes a position on a field wins that
+    field. Lower-priority rules fill in fields no higher-priority rule
+    addressed. Equal priorities: declaration order (first occurrence)
+    wins, matching the TS evaluator and the v0.2 tiebreaker.
+
+    Returns a dict with all three decoration fields (None for fields no
+    rule positioned on, OR fields where the winning position was a
+    sentinel release). The injector treats both the same — pop the
+    attribute if it's no longer set. Returns None only when no rule
+    positioned on anything, so callers can distinguish "no decoration"
+    from "decoration explicitly clears the host."
     """
-    best_priority: float = float("-inf")
-    best: dict[str, str | None] | None = None
-    for rule, decoration in rule_decorations:
-        if decoration is None:
-            continue
-        if rule.priority > best_priority:
-            best_priority = rule.priority
-            best = decoration
-    return best
+    indexed = [
+        (rule.priority, idx, dec)
+        for idx, (rule, dec) in enumerate(rule_decorations)
+        if dec is not None
+    ]
+    if not indexed:
+        return None
+    # Sort: higher priority first; for ties, earlier declaration index
+    # first (negate priority so the natural ascending sort gives us
+    # high-priority-first).
+    indexed.sort(key=lambda t: (-t[0], t[1]))
+
+    merged: dict[str, str | None] = {}
+    for _prio, _idx, dec in indexed:
+        for field in _DECORATION_FIELDS:
+            if field in merged:
+                continue  # already taken by a higher-priority rule
+            if field in dec:
+                merged[field] = dec[field]
+        if len(merged) == len(_DECORATION_FIELDS):
+            break  # every field claimed; no need to keep walking
+
+    if not merged:
+        # No rule took any field-level position (shouldn't happen
+        # because _normalize_decoration returns None when sparse, but
+        # defend against future shape changes).
+        return None
+    # Inflate to the dense shape the injector expects. Fields not
+    # claimed by any rule remain None — same as "field released."
+    return {field: merged.get(field) for field in _DECORATION_FIELDS}
+
+
+# Back-compat alias. Old callers can switch incrementally.
+pick_winner = merge_decorations

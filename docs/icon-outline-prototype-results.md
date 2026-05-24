@@ -1,5 +1,20 @@
 # Prototype results: contrasting outline for painted icons
 
+> **Status: superseded by the per-rule background chip
+> (v0.3.0a3).** The v3 variant described below shipped briefly in
+> v0.3.0a1/a2 but ran into an alpha-mask artifact problem that no
+> stroke / shadow / morphological-close variant fully solved — any
+> technique that operates on the icon's alpha silhouette also
+> draws around internal cutouts (e.g. the inner exclamation in
+> `alert-circle`, the clapper in `bell`). v0.3.0a3 replaces the
+> outline entirely with a Mushroom-style colored chip rendered
+> *behind* the icon: the icon's transparent cutouts simply reveal
+> the chip color cleanly. See the v0.3.0a3 entry in
+> [`CHANGELOG.md`](../CHANGELOG.md) for the user-facing change and
+> [`outline.ts`](../frontend/src/outline.ts) for the chip
+> implementation. This doc is kept as historical record of the
+> outline approach's design rationale and the variants tested.
+
 Sibling to [`icon-outline-prototype.md`](icon-outline-prototype.md),
 which laid out the design. This doc records what the prototype
 actually surfaced and which variant was selected for ship.

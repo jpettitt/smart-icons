@@ -1,6 +1,254 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
+## v0.3.0a3 — 2026-05-24
+
+**Alpha 3 on the v0.3 line.** Pivots the v0.3 line away from the
+contrasting outline approach to a per-rule **Mushroom-style background
+chip**, replaces the v0.2 "winner takes all" priority semantic with
+**field-level merging**, **removes template mode** entirely after it
+spent two minor versions as inert storage-only code, and migrates the
+YAML editing surface from bare textareas to HA's **`ha-code-editor`**.
+The post-review pass also fixed two real bugs surfaced in v0.3.0a1/a2
+(stale icons after a rule drops its `icon`; bg-only rules not painting)
+and added a glob-target resolution cache to the injector so large HA
+installs don't burn CPU re-running `fnmatch` on every state change.
+
+### Breaking changes
+
+- **Template mode is gone.** `mode: template` and the `template`
+  decoration field had been demoted to "storage-only / demand-driven"
+  since v0.2 — the evaluator returned `None`, so any rule with
+  `mode: template` was inert at runtime. Rather than keep dead code
+  around (and a deprecated dropdown option in the editor, plus a
+  "deprecated" legend in the template fieldset), v0.3.0a3 removes
+  the schema entry, the editor's template view, and all related
+  plumbing. **Stored rules with `mode: template` fail validation on
+  load and are silently dropped** by the store's per-rule
+  `vol.Invalid` catch. Migration: convert any template logic to
+  stacked mapping / threshold rules (see
+  [`docs/examples.md`](docs/examples.md)) before upgrading. If a
+  stored rule with a stray `template` field on a non-template-mode
+  rule survived a prior upgrade, that rule also fails to load now
+  (the rule schema is PREVENT_EXTRA by default) — re-create it via
+  the editor.
+
+- **Installation-wide outline toggle is gone.** The
+  `smart_icons/get_options` and `smart_icons/update_options`
+  WebSocket commands, the `smart_icons_options_updated` bus event,
+  the `outline_enabled` storage field, and the *Contrasting outline
+  on painted icons* checkbox in the panel are all removed. Rules
+  now opt in to a chip per-rule via the new `background_color`
+  decoration field instead. Existing installs with
+  `outline_enabled: false` saved from v0.3.0a1/a2 silently lose the
+  setting on upgrade (it's no longer read); no migration is needed
+  because nothing was rendered against the old toggle in this
+  branch's contents.
+
+- **Priority is now field-level, not rule-level.** A high-priority
+  rule no longer erases lower-priority rules' contributions to
+  fields it doesn't address. Concretely: a chip-only rule
+  (`background_color` only) at priority 99 now coexists with a
+  color-by-state rule at priority 10 — chip from the high rule,
+  color from the low rule. The v0.2 behavior dropped the color.
+  Users who depended on the old "winner takes all" semantic to
+  hide lower-priority decorations should now set explicit
+  null / `""` / `"inherit"` / `"unset"` sentinels on the fields
+  they want released; sentinels in a high-priority rule block
+  lower-priority contributions to that field. See
+  [DESIGN.md § 4.2](DESIGN.md#42-decorations-and-the-priority-merge)
+  for the full semantic.
+
+### What's new
+
+- **Per-rule background chip (`background_color`).** Replaces the
+  v0.3.0a1 installation-wide outline. The chip renders as a colored
+  circle behind the icon, à la Mushroom — `background-color` +
+  `border-radius: 50%` + `box-shadow: 0 0 0 5px <color>` on the
+  `<ha-state-icon>` host. The shadow technique extends the visible
+  chip past the host's 24×24 box without taking layout space
+  (~34 px visible chip on a 24 px icon, Mushroom's ~1.42× ratio).
+  Available on mapping entries and threshold entries; accepts any
+  CSS color string including `rgba()` for translucent chips:
+
+  ```yaml
+  mapping:
+    'on':
+      color: '#ffeb3b'
+      background_color: '#b71c1c'
+    'off':
+      background_color: '#1b5e20'
+  ```
+
+  Either `color`, `background_color`, both, or neither may be set
+  per entry. A bg-only entry leaves the icon's natural color alone
+  and just paints the chip.
+
+- **Field-level priority merging.** Decorations are now merged per
+  field instead of per rule. The injector walks matching rules in
+  priority order and, for each of `color` / `icon` /
+  `background_color`, takes the value from the highest-priority
+  rule that addresses it. Equal priorities resolve in declaration
+  order (matches v0.2). Explicit sentinels (`null`, `""`,
+  `"inherit"`, `"unset"`) in a high-priority rule are *positions*
+  that explicitly release a field — they block lower-priority
+  rules from contributing that field, distinguishing "I have no
+  opinion" from "I want this cleared." See the new
+  `merge_decorations` in
+  [`evaluator.py`](custom_components/smart_icons/evaluator.py).
+
+- **Rule editor: foreground + background colors on one row.** The
+  rule editor renders a paired color picker per decoration row —
+  *Icon color* on the left, *Background* on the right — for both
+  mapping and threshold entries. The native `<input type="color">`
+  swatch sits next to a free-form text field so users can paste
+  `rgba()` or `var(--…)` values the swatch can't represent. The
+  threshold *Comparator* dropdown gained plain-English labels
+  (`< Less than`, `≤ Less than or equal`, etc.) and the
+  comparator + value share a single row.
+
+- **YAML editing now uses `ha-code-editor`** (HA's CodeMirror 6
+  surface — the same one the automation editor, blueprint inspector,
+  and trace viewer use). Both the per-rule YAML view inside the rule
+  editor and the whole-config YAML view in the panel switched from
+  bare `<textarea>` to `<ha-code-editor mode="yaml">`. Brings syntax
+  highlighting, search/replace (Ctrl+F), entity- and icon-name
+  completion, and a Ctrl+S / Cmd+S shortcut that fires the panel's
+  Save handler. Jump-to-rule and jump-to-line (clicking a per-rule
+  validation error) still work — rewritten on top of CodeMirror's
+  `dispatch({ selection })` API. The element is a lazy-loaded HA
+  chunk; the panel registers a `customElements.whenDefined` upgrade
+  so the YAML surface paints correctly on first navigation.
+
+- **Developer notes section** in [README.md](README.md). Documents
+  that Smart Icons fires synthetic `state_changed` events when
+  writing its three attributes, what filters downstream listeners
+  can use to ignore them, and how the icon-clear safety contract
+  interacts with other integrations writing the same target.
+
+### Bug fixes
+
+- **Stale icons no longer stick after a rule drops the `icon`
+  field.** Before this release the injector would write the icon
+  attribute but never clear it: editing a rule to remove the icon
+  left the previous glyph in place until HA restart. The injector
+  now tracks the last `icon` it wrote per target and pops the
+  attribute when the rule no longer addresses it, *only* when the
+  current value still matches our last write (so source
+  integrations that overwrite our icon with their own value aren't
+  clobbered). See `_apply_target` / `_release_target` in
+  [`injector.py`](custom_components/smart_icons/injector.py).
+
+- **Background-only rules now paint.** The painter's two paint
+  paths (the `ha-state-icon.stateObj` setter patch and the DOM-
+  crawler fallback) both gated the entire decoration call on
+  `smart_icons_color` being non-empty. A rule that set only
+  `background_color` wrote the attribute server-side but the
+  painter ignored it. Both paths now trigger paint when *either*
+  attribute is set, and the gating logic is centralized in a
+  single `decideAndPaint` helper so the two paths can't drift
+  again.
+
+- **Rule editor: thresholds-mode validation was broken.** The
+  "needs at least one entry" check compared the comparator
+  function's return value with `!== null`, but the function
+  returns `''` for "no comparator selected" — so every threshold
+  row, including a completely blank one, looked valid and the
+  check never fired. Now properly checks each entry has either a
+  comparator or at least one decoration field (color, icon, or
+  the new background).
+
+- **Rule editor: degenerate mapping rows no longer save.** A
+  mapping row with a key but no color / bg / icon used to
+  serialize as `{key: {}}` — schema-valid, but the evaluator
+  treated the empty decoration as "no match" and did nothing at
+  runtime, so the rule looked stored but had no effect. These
+  rows are now dropped on save with a validation error
+  (`Mapping mode needs at least one state → decoration entry`).
+
+### Internals
+
+- `pick_winner` retired in favor of `merge_decorations`
+  (Python) / `mergeDecorations` (TS). The old name is kept as an
+  alias for back-compat. Both evaluators now return *sparse*
+  position objects from `evaluate_thresholds` / `evaluate_mapping`
+  — only fields the matching entry positively addressed appear —
+  so the merger can distinguish "no position" from "explicit
+  release."
+
+- Painter deduped: one `decideAndPaint(host, color, bg)` helper
+  is the single source of truth for the "given these resolved
+  attrs, what do we do?" decision. Both the `stateObj` setter
+  patch and the `paintHost` crawler call it. Reduces the chance
+  of one path drifting from the other as new attributes get added.
+
+- TypeScript evaluator at parity with Python: the v0.3.0a1/a2 TS
+  `normalizeDecoration` silently dropped `background_color`. It
+  now handles all three fields and mirrors the merge semantic
+  exactly. Not currently on the paint path (the backend injector
+  is authoritative) but the divergence would have been a latent
+  trap for any future preview UI — and tests now catch a
+  divergence here.
+
+- Frontend tests gained a `rule-editor.test.ts` suite (the editor
+  had no unit tests until this release; only the playwright e2e
+  smoke). The web-test-runner config was updated to pass
+  `tsconfig.json` through so Lit's legacy `@customElement` /
+  `@property` decorators load under test (the dev bundle's
+  `experimentalDecorators` flag wasn't visible to wtr's esbuild
+  before).
+
+- **Glob-target resolution cache** in the injector. v0.2 and the
+  v0.3 alpha line ran `fnmatch.filter` against
+  `hass.states.async_entity_ids()` on every relevant state change,
+  per rule per glob target — `O(rules × globs × entities)` of
+  string work on the hot path. The new `_resolved_cache` keys
+  resolved sets by rule id; cache hits are O(1). Invalidation is
+  surgical: rule updates drop the changed rule's entry,
+  `entity_registry_updated` and new-entity-appearance events drop
+  every glob rule's entry (literal-only rules keep their cache),
+  and three injector tests cover the cache-hit / cache-invalidate
+  / new-entity-pickup paths.
+
+- Backend test coverage: 118 tests (+18 since v0.3.0a2) covering
+  the merger, bg-only paths, icon-clear contract, the source-
+  integration-overwrites-our-icon safety case, the glob cache,
+  and template-mode rejection.
+
+- File headers and module docstrings updated across `rule.py`,
+  `injector.py`, `evaluator.py`, `outline.ts`, `painter.ts` to
+  match the new behavior. The legacy outline kill-switch comment
+  in `outline.ts` is gone — chips are always per-rule, no
+  installation-wide gate.
+
+### Upgrade
+
+Drop-in from v0.3.0a2 with two behavior changes to verify.
+
+**Template-mode rules silently drop on load.** If you have any
+rules with `mode: template` in
+`.storage/smart_icons.rules`, they will fail validation on
+load — the store's per-rule `vol.Invalid` catch drops them and
+continues with the rest. Template mode was inert at runtime since
+v0.2 (the evaluator returned `None` for it), so functionally
+nothing changes — but the rule disappears from the panel. If you
+need that behavior, build it out of stacked mapping / threshold
+rules (see [`docs/examples.md`](docs/examples.md)) before
+upgrading.
+
+**"Winner takes all" → field-level merge.** Any installation that
+relied on the implicit "highest-priority rule erases everything
+else" v0.2 semantic should be re-checked. If a high-priority rule
+needs to actively hide a lower-priority rule's color (or icon, or
+bg), set the corresponding field to `null` or `"inherit"`
+explicitly — the merger will treat that as "released, block
+lower contributions."
+
+The `outline_enabled` field in the storage doc from v0.3.0a1/a2
+is now ignored; you can delete it from
+`.storage/smart_icons.rules` by hand if you want a clean file, but
+it's harmless to leave.
+
 ## v0.3.0a2 — 2026-05-23
 
 **Alpha 2 on the v0.3 line.** Closes the rule-editor bare-form-elements

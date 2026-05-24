@@ -1,81 +1,16 @@
 import { expect } from '@open-wc/testing';
 
-import {
-  applyDecoration,
-  autoContrastOutline,
-  isOutlineEnabled,
-  releaseDecoration,
-  setOutlineEnabled,
-} from '../src/outline.js';
+import { applyDecoration, releaseDecoration } from '../src/outline.js';
 
-/** Build an ha-state-icon-shaped host with an inner SVG path the
- *  outline module can target. The shadow root + nested `<svg><path>`
- *  mirrors how HA wraps MDI glyphs (ha-state-icon → ha-svg-icon →
- *  inline SVG); the outline module's shadow-piercing walk should
- *  reach into all of it. */
-function makeHostWithSvgPath(): HTMLElement {
-  const host = document.createElement('ha-state-icon');
-  const sr = host.attachShadow({ mode: 'open' });
-  const svgNs = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNs, 'svg');
-  const path = document.createElementNS(svgNs, 'path');
-  path.setAttribute('d', 'M0,0 L10,10');
-  svg.appendChild(path);
-  sr.appendChild(svg);
-  return host;
+/** Bare ha-state-icon-shaped host. The chip-style decoration this
+ *  module applies operates on the host element directly (no shadow-
+ *  root traversal needed), so a host without inner content is
+ *  sufficient. */
+function makeHost(): HTMLElement {
+  return document.createElement('ha-state-icon');
 }
 
-function getPath(host: HTMLElement): SVGPathElement {
-  return host.shadowRoot!.querySelector('svg path')! as SVGPathElement;
-}
-
-describe('outline', () => {
-  beforeEach(() => {
-    // Each test starts with outlines on (the documented default).
-    setOutlineEnabled(true);
-  });
-
-  describe('autoContrastOutline', () => {
-    it('returns black for clearly-light colors (W3C luminance > 0.5)', () => {
-      // Pure yellow (#FFFF00) luminance ≈ 0.93 → outline must be dark.
-      expect(autoContrastOutline('#FFFF00')).to.equal('#000000');
-      expect(autoContrastOutline('white')).to.equal('#000000');
-      expect(autoContrastOutline('#FFD700')).to.equal('#000000');
-    });
-
-    it('returns white for clearly-dark colors (W3C luminance ≤ 0.5)', () => {
-      // Dark red (#8B0000) luminance ≈ 0.05 → outline must be light.
-      expect(autoContrastOutline('#8B0000')).to.equal('#ffffff');
-      expect(autoContrastOutline('black')).to.equal('#ffffff');
-      expect(autoContrastOutline('#4B0082')).to.equal('#ffffff');
-    });
-
-    it('is stable across repeated calls (memoization)', () => {
-      // Not strictly observable from the outside, but the test pins
-      // the contract: same input always gives the same answer, so
-      // the memo can never get out of sync with re-computation.
-      const first = autoContrastOutline('#FFFF00');
-      const second = autoContrastOutline('#FFFF00');
-      expect(first).to.equal(second);
-    });
-  });
-
-  describe('outline-enabled flag', () => {
-    it('defaults to true after module load', () => {
-      // The module-level default is documented as true to match the
-      // installation default and avoid a brief no-outline flash at
-      // bootstrap.
-      expect(isOutlineEnabled()).to.equal(true);
-    });
-
-    it('round-trips through setOutlineEnabled', () => {
-      setOutlineEnabled(false);
-      expect(isOutlineEnabled()).to.equal(false);
-      setOutlineEnabled(true);
-      expect(isOutlineEnabled()).to.equal(true);
-    });
-  });
-
+describe('outline (visual-prototype: background chip)', () => {
   describe('applyDecoration', () => {
     let host: HTMLElement;
 
@@ -84,7 +19,7 @@ describe('outline', () => {
     });
 
     it('sets color + ownership marker', () => {
-      host = makeHostWithSvgPath();
+      host = makeHost();
       document.body.appendChild(host);
 
       applyDecoration(host, '#FFFF00');
@@ -93,70 +28,93 @@ describe('outline', () => {
       expect(host.dataset.smartIconsOwned).to.equal('color');
     });
 
-    it('writes paint-order + stroke when outline is enabled', () => {
-      host = makeHostWithSvgPath();
+    it('paints a circular background chip when the rule specifies a bg color', () => {
+      host = makeHost();
       document.body.appendChild(host);
 
-      applyDecoration(host, '#FFFF00'); // yellow → black outline
+      applyDecoration(host, '#FFFF00', '#43a047');
 
-      const path = getPath(host);
-      // CSSOM normalizes `paint-order: stroke fill` by dropping the
-      // trailing default (`fill` is implicit after `stroke`) — the
-      // serialized form is just `stroke`. Behavior is identical.
-      expect(path.style.paintOrder).to.equal('stroke');
-      // Computed style normalizes hex to rgb; test the actual
-      // inline-style value the module wrote.
-      expect(path.style.stroke).to.equal('rgb(0, 0, 0)');
-      expect(path.style.strokeWidth).to.equal('1.5');
-      expect(path.style.strokeLinejoin).to.equal('round');
+      // Chip = bg-color + border-radius + box-shadow ring. The
+      // box-shadow extends the visible chip beyond the host's
+      // intrinsic 24x24 box without taking layout space.
+      expect(host.style.backgroundColor).to.equal('rgb(67, 160, 71)');
+      expect(host.style.borderRadius).to.equal('50%');
+      expect(host.style.boxShadow).to.contain('rgb(67, 160, 71)');
     });
 
-    it('does NOT write stroke when outline is disabled', () => {
-      setOutlineEnabled(false);
-      host = makeHostWithSvgPath();
+    it('paints NO chip when the rule does not specify a bg color', () => {
+      host = makeHost();
       document.body.appendChild(host);
 
       applyDecoration(host, '#FFFF00');
 
-      const path = getPath(host);
-      expect(path.style.paintOrder).to.equal('');
-      expect(path.style.stroke).to.equal('');
-      expect(path.style.strokeWidth).to.equal('');
-      // Color + ownership still get set; only the stroke is gated.
       expect(host.style.color).to.equal('rgb(255, 255, 0)');
       expect(host.dataset.smartIconsOwned).to.equal('color');
+      // No chip — same end state as a rule without a background field.
+      expect(host.style.backgroundColor).to.equal('');
+      expect(host.style.borderRadius).to.equal('');
+      expect(host.style.boxShadow).to.equal('');
     });
 
-    it('removes a previously applied stroke when re-applied with outline off', () => {
-      host = makeHostWithSvgPath();
+    it('paints a chip with NO color override when called with empty color', () => {
+      // Bg-only rule: caller wants the chip but no foreground recolor.
+      // applyDecoration should still own the host and apply the chip,
+      // but leave the icon's natural color alone (style.color = '').
+      host = makeHost();
+      host.style.color = 'rebeccapurple';
       document.body.appendChild(host);
 
-      // First paint with outline on — stroke gets written.
-      applyDecoration(host, '#FFFF00');
-      // See above — CSSOM normalizes the value.
-      expect(getPath(host).style.paintOrder).to.equal('stroke');
+      applyDecoration(host, '', '#43a047');
 
-      // Admin toggles outlines off; painter re-runs applyDecoration.
-      setOutlineEnabled(false);
-      applyDecoration(host, '#FFFF00');
+      // style.color cleared so theme/cascade default takes over.
+      expect(host.style.color).to.equal('');
+      expect(host.dataset.smartIconsOwned).to.equal('color');
+      expect(host.style.backgroundColor).to.equal('rgb(67, 160, 71)');
+      expect(host.style.borderRadius).to.equal('50%');
+      expect(host.style.boxShadow).to.contain('rgb(67, 160, 71)');
+    });
 
-      const path = getPath(host);
-      expect(path.style.paintOrder).to.equal('');
-      expect(path.style.stroke).to.equal('');
+    it('accepts rgba bg colors (translucent chip)', () => {
+      // The painter sets the value as a raw style.backgroundColor;
+      // the browser parses any CSS-valid color string. rgba() in
+      // particular lets users author translucent chips.
+      host = makeHost();
+      document.body.appendChild(host);
+
+      applyDecoration(host, '#FFFF00', 'rgba(67, 160, 71, 0.5)');
+
+      expect(host.style.backgroundColor).to.equal('rgba(67, 160, 71, 0.5)');
+      expect(host.style.boxShadow).to.contain('rgba(67, 160, 71, 0.5)');
+    });
+
+    it('clears the chip when the rule drops the bg color', () => {
+      host = makeHost();
+      document.body.appendChild(host);
+
+      // First paint with a chip, second paint without.
+      applyDecoration(host, '#FFFF00', '#43a047');
+      expect(host.style.backgroundColor).to.equal('rgb(67, 160, 71)');
+
+      applyDecoration(host, '#FFFF00');
+      expect(host.style.backgroundColor).to.equal('');
+      expect(host.style.borderRadius).to.equal('');
+      expect(host.style.boxShadow).to.equal('');
     });
 
     it('idempotent: applying the same color twice yields the same end state', () => {
-      host = makeHostWithSvgPath();
+      host = makeHost();
       document.body.appendChild(host);
 
-      applyDecoration(host, '#FFFF00');
+      applyDecoration(host, '#FFFF00', '#43a047');
       const firstColor = host.style.color;
-      const firstStroke = getPath(host).style.stroke;
+      const firstBg = host.style.backgroundColor;
+      const firstShadow = host.style.boxShadow;
 
-      applyDecoration(host, '#FFFF00');
+      applyDecoration(host, '#FFFF00', '#43a047');
 
       expect(host.style.color).to.equal(firstColor);
-      expect(getPath(host).style.stroke).to.equal(firstStroke);
+      expect(host.style.backgroundColor).to.equal(firstBg);
+      expect(host.style.boxShadow).to.equal(firstShadow);
     });
   });
 
@@ -167,34 +125,30 @@ describe('outline', () => {
       host?.remove();
     });
 
-    it('clears color, ownership, and stroke on a previously decorated host', () => {
-      host = makeHostWithSvgPath();
+    it('clears every style applyDecoration set on a previously decorated host', () => {
+      host = makeHost();
       document.body.appendChild(host);
-      applyDecoration(host, '#FFFF00');
+      applyDecoration(host, '#FFFF00', '#43a047');
 
       releaseDecoration(host);
 
       expect(host.style.color).to.equal('');
       expect(host.dataset.smartIconsOwned).to.equal(undefined);
-      const path = getPath(host);
-      expect(path.style.stroke).to.equal('');
-      expect(path.style.paintOrder).to.equal('');
+      expect(host.style.backgroundColor).to.equal('');
+      expect(host.style.borderRadius).to.equal('');
+      expect(host.style.boxShadow).to.equal('');
     });
 
     it('is a no-op on a host we never decorated', () => {
-      // Hosts not owned by Smart Icons must not have their styles
-      // touched — this protects against accidental cleanup of an
-      // un-painted icon next to a painted one in the same shadow tree.
-      host = makeHostWithSvgPath();
+      host = makeHost();
       document.body.appendChild(host);
       host.style.color = 'orange';
-      const path = getPath(host);
-      path.style.stroke = 'purple';
+      host.style.backgroundColor = 'purple';
 
       releaseDecoration(host);
 
       expect(host.style.color).to.equal('orange');
-      expect(path.style.stroke).to.equal('purple');
+      expect(host.style.backgroundColor).to.equal('purple');
     });
   });
 });

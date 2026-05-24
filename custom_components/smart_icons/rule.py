@@ -1,11 +1,17 @@
 """Rule type and validation for Smart Icons.
 
-A rule produces a *decoration* — `{color?, icon?}` — for a target entity,
-driven by the state of a source entity. Three modes (thresholds, mapping,
-template) are accepted at the storage layer; thresholds and mapping are
-the two supported runtime modes. Template strings still validate and
-round-trip through storage so existing rules don't break, but runtime
-evaluation is demand-driven (see TODO.md) and currently returns None.
+A rule produces a *decoration* — `{color?, icon?, background_color?}` —
+for a target entity, driven by the state of a source entity. Two modes
+are supported: thresholds (numeric ranges) and mapping (exact state →
+decoration). The third mode that earlier versions accepted (template,
+Jinja-driven decoration) is **removed in v0.3.0a3** — see the v0.3.0a3
+CHANGELOG entry. Stored rules with `mode: template` fail validation
+on load and are dropped (the store's load path catches `vol.Invalid`
+and skips bad rules without aborting setup).
+
+`background_color` is the Mushroom-style colored chip rendered behind
+the icon (v0.3+). Independent of `color`: either, both, or neither may
+be set in any given decoration.
 """
 
 from __future__ import annotations
@@ -18,9 +24,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import (
     MAPPING_ELSE_KEY,
-    MAX_TEMPLATE_LENGTH,
     MODE_MAPPING,
-    MODE_TEMPLATE,
     MODE_THRESHOLDS,
     SOURCE_KIND_UI,
     VALID_MODES,
@@ -54,6 +58,11 @@ DECORATION_SCHEMA = vol.Schema(
     {
         vol.Optional("color"): _DECORATION_VALUE,
         vol.Optional("icon"): _DECORATION_VALUE,
+        # Optional background color — when set, the painter renders a
+        # Mushroom-style colored circle behind the icon. Accepts the
+        # same value space as `color` (CSS color string, "", or
+        # release sentinels).
+        vol.Optional("background_color"): _DECORATION_VALUE,
     },
     extra=vol.PREVENT_EXTRA,
 )
@@ -71,6 +80,7 @@ _THRESHOLD_ENTRY = vol.Schema(
         vol.Optional("eq"): vol.Any(vol.Coerce(float), str),
         vol.Optional("color"): _DECORATION_VALUE,
         vol.Optional("icon"): _DECORATION_VALUE,
+        vol.Optional("background_color"): _DECORATION_VALUE,
     },
     extra=vol.PREVENT_EXTRA,
 )
@@ -126,7 +136,6 @@ _RULE_BASE_SCHEMA = vol.Schema(
         vol.Required("mode"): vol.In(VALID_MODES),
         vol.Optional("thresholds"): [_threshold_entry],
         vol.Optional("mapping"): _mapping_dict,
-        vol.Optional("template"): vol.All(str, vol.Length(max=MAX_TEMPLATE_LENGTH)),
         vol.Optional("enabled", default=True): bool,
         vol.Optional("priority", default=10): int,
         vol.Optional("id"): vol.Any(str, None),
@@ -161,10 +170,6 @@ def validate_rule(data: dict[str, Any]) -> dict[str, Any]:
     elif mode == MODE_MAPPING:
         if not validated.get("mapping"):
             raise vol.Invalid("mode=mapping requires non-empty 'mapping'")
-    elif mode == MODE_TEMPLATE:
-        tpl = validated.get("template")
-        if not tpl or not tpl.strip():
-            raise vol.Invalid("mode=template requires non-empty 'template'")
 
     # Source handling depends on the target shape:
     # - Single literal target with no source given: default to the target
@@ -211,7 +216,6 @@ class Rule:
     priority: int = 10
     thresholds: list[dict[str, Any]] | None = None
     mapping: dict[str, dict[str, Any]] | None = None
-    template: str | None = None
     source_attribute: str | None = None
     created: str = ""
     updated: str = ""
@@ -241,7 +245,6 @@ class Rule:
             priority=data.get("priority", 10),
             thresholds=data.get("thresholds"),
             mapping=data.get("mapping"),
-            template=data.get("template"),
             created=data.get("created") or "",
             updated=data.get("updated") or "",
             source_kind=data.get("source_kind", SOURCE_KIND_UI),
@@ -266,6 +269,4 @@ class Rule:
             out["thresholds"] = self.thresholds
         if self.mapping is not None:
             out["mapping"] = self.mapping
-        if self.template is not None:
-            out["template"] = self.template
         return out

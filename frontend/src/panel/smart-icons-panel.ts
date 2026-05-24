@@ -7,10 +7,9 @@
  * Current surfaces: table of rules with Edit / Duplicate / Delete
  * actions backed by the admin-only WS API; per-rule YAML view via the
  * editor's Show code editor toggle; whole-config YAML view via the
- * panel-level Show code editor toggle (atomic replace_all save);
- * installation-wide outline toggle (Contrasting outline on painted
- * icons). Sort, search, drag-reorder priority, and import/export
- * still on the roadmap (see TODO.md).
+ * panel-level Show code editor toggle (atomic replace_all save).
+ * Sort, search, drag-reorder priority, and import/export still on
+ * the roadmap (see TODO.md).
  */
 
 import { LitElement, html, nothing } from 'lit';
@@ -23,6 +22,27 @@ import type { Hass, Rule } from '../types.js';
 import './rule-editor.js';
 import { panelStyles } from './styles.js';
 import { findRuleLineRanges, rulesToYaml, yamlToImportable } from './yaml.js';
+
+/** Minimal shape of the CodeMirror 6 view that `ha-code-editor`
+ *  exposes via its `.codemirror` property. We only use `focus()` and
+ *  the selection-update `dispatch` shape; typing it loosely keeps us
+ *  from taking a hard dep on `@codemirror/view`. */
+interface CodeMirrorView {
+  focus(): void;
+  dispatch(spec: {
+    selection: { anchor: number; head?: number };
+    scrollIntoView?: boolean;
+  }): void;
+}
+
+/** The ha-code-editor element exposes its underlying CodeMirror
+ *  view as `.codemirror` once mounted (see hass_frontend bundle).
+ *  Before mount or while the lazy chunk is still loading the
+ *  property is undefined; jump helpers degrade gracefully then. */
+interface HaCodeEditorEl extends HTMLElement {
+  value?: string;
+  codemirror?: CodeMirrorView;
+}
 
 interface RuleError {
   index: number;
@@ -88,29 +108,37 @@ export class SmartIconsPanel extends LitElement {
   // fires after the user clicks Discard.
   @state() private pendingDiscard = false;
 
-  // Installation-wide options. Hydrated from the backend on connect
-  // and kept live via the `smart_icons_options_updated` event. We
-  // default `outlineEnabled` to true to match the backend default —
-  // a brief mismatch between mount and the WS round-trip would
-  // otherwise render the checkbox in the wrong state.
-  @state() private outlineEnabled = true;
-
   private store?: RuleStore;
   private unsubscribe?: () => void;
-  private optionsUnsub?: () => void;
-  // Ref into the panel-level YAML textarea so per-rule error items
-  // can focus + select-range to highlight the failing rule.
-  private codeTextareaRef: Ref<HTMLTextAreaElement> = createRef();
+  // Ref into the panel-level ha-code-editor so per-rule error items
+  // can focus + select-range to highlight the failing rule. The
+  // element exposes its underlying CodeMirror 6 view as `.codemirror`
+  // (see HA's hass_frontend bundle); we dispatch a selection update
+  // into that view rather than treating it as a textarea.
+  private codeEditorRef: Ref<HaCodeEditorEl> = createRef();
 
   override connectedCallback(): void {
     super.connectedCallback();
     void this.initStore();
+    // ha-code-editor is HA's CodeMirror chunk — lazy-loaded the first
+    // time anything imports it. If our panel mounts before any HA
+    // surface (automation editor, blueprint inspector, etc.) has
+    // forced the load, the element is undefined and renders as a
+    // hollow placeholder. requestUpdate() once it lands so the YAML
+    // surface upgrades from invisible to functional without a refresh.
+    if (!customElements.get('ha-code-editor')) {
+      void customElements
+        .whenDefined('ha-code-editor')
+        .then(() => this.requestUpdate())
+        .catch(() => {
+          /* never loaded — user can refresh once HA's chunks settle */
+        });
+    }
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this.unsubscribe?.();
-    this.optionsUnsub?.();
     void this.store?.disconnect();
   }
 
@@ -138,41 +166,11 @@ export class SmartIconsPanel extends LitElement {
               </div>
             `
           : nothing}
-        ${this.renderOptionsRow()}
         ${this.codeMode ? this.renderCodeView() : this.renderVisualView()}
       </ha-card>
       ${this.dialogOpen ? this.renderDialog() : nothing}
       ${this.pendingDelete ? this.renderDeleteConfirm() : nothing}
       ${this.pendingDiscard ? this.renderDiscardConfirm() : nothing}
-    `;
-  }
-
-  /** Installation-wide options row. Uses HA's native `<ha-switch>`,
-   *  the canonical option-toggle element across HA's own settings,
-   *  backup, and onboarding panels. ha-switch is reliably defined
-   *  by the time any custom panel mounts (verified by grepping
-   *  hass_frontend — separate concern from `ha-textfield`, which
-   *  *was* lazy-load-unreliable and is the reason the rule editor
-   *  uses plain inputs styled with HA CSS variables). */
-  private renderOptionsRow() {
-    return html`
-      <div class="options-row">
-        <label class="option-toggle">
-          <span class="option-label">
-            <strong>Contrasting outline on painted icons</strong>
-            <span class="option-help">
-              Adds a black/white outline (auto-picked for contrast) to
-              every icon Smart Icons paints. Helps when the painted
-              color matches the card background (e.g. yellow icons on
-              a light theme).
-            </span>
-          </span>
-          <ha-switch
-            .checked=${this.outlineEnabled}
-            @change=${this.toggleOutline}
-          ></ha-switch>
-        </label>
-      </div>
     `;
   }
 
@@ -196,29 +194,36 @@ export class SmartIconsPanel extends LitElement {
     `;
   }
 
-  /** Code mode: full-width YAML textarea + sticky bottom bar with the
+  /** Code mode: full-width ha-code-editor + sticky bottom bar with the
    *  toggle on the left and a Save button on the right. Save sends
    *  the whole `rules:` list through the atomic `replace_all` WS
    *  command — server validates everything before touching storage,
    *  so existing rules are never partially updated on failure. */
   private renderCodeView() {
     return html`
-      <!-- Whole-config YAML editor — bare textarea per
-           docs/ha-elements-guide.md decision tree, item 4: ha-code-editor
-           exists but requires Ace/Monaco wiring that's overkill here. -->
-      <textarea
+      <!-- Whole-config YAML editor — ha-code-editor (CodeMirror 6
+           inside HA's frontend). Same surface the automation editor
+           uses. ha-code-editor is a lazy-loaded chunk; we register a
+           whenDefined upgrade in connectedCallback so the first
+           panel mount upgrades cleanly once the chunk arrives. -->
+      <ha-code-editor
         class="yaml-area panel-yaml"
-        spellcheck="false"
-        ${ref(this.codeTextareaRef)}
+        mode="yaml"
+        autocomplete-entities
+        autocomplete-icons
+        dir="ltr"
+        ${ref(this.codeEditorRef)}
+        .hass=${this.hass}
         .value=${this.codeText}
-        @input=${(e: Event) => {
-          this.codeText = (e.target as HTMLTextAreaElement).value;
+        .readOnly=${this.codeSubmitting}
+        @value-changed=${(e: CustomEvent<{ value: string }>) => {
+          this.codeText = e.detail?.value ?? '';
           // Any keystroke means the user is reacting to the previous
           // error — clear it so the inline-error block doesn't linger.
           if (this.codeError) this.codeError = null;
         }}
-        ?disabled=${this.codeSubmitting}
-      ></textarea>
+        @editor-save=${this.saveCodeChanges}
+      ></ha-code-editor>
       ${this.codeError ? this.renderCodeError(this.codeError) : nothing}
       <div class="panel-actions">
         <!-- Bare text-toggle button — see renderVisualView. -->
@@ -313,48 +318,89 @@ export class SmartIconsPanel extends LitElement {
     return null;
   }
 
-  /** Focus the textarea and select the lines of the given rule.
+  /** Resolve the CodeMirror view inside the ha-code-editor, or null
+   *  when the lazy chunk hasn't loaded yet (or the editor isn't
+   *  mounted). Jump helpers degrade to no-op rather than throw —
+   *  the error text stays visible, just not clickable-to-highlight. */
+  private resolveCmView(): {
+    view: CodeMirrorView;
+    text: string;
+  } | null {
+    const el = this.codeEditorRef.value;
+    if (!el) return null;
+    const view = el.codemirror;
+    if (!view) return null;
+    // We mirror this.codeText into the editor on every render via
+    // .value; reading it here keeps the line-range math consistent
+    // with what's actually displayed.
+    return { view, text: this.codeText };
+  }
+
+  /** Translate a 1-indexed (line, col) into a character offset in
+   *  `text`. Column out of range collapses to end-of-line. */
+  private lineColToOffset(text: string, line: number, column?: number): number | null {
+    const lines = text.split('\n');
+    if (line < 1 || line > lines.length) return null;
+    const lineIdx = line - 1;
+    let lineStart = 0;
+    for (let i = 0; i < lineIdx; i++) lineStart += lines[i].length + 1;
+    if (column && column >= 1 && column <= lines[lineIdx].length + 1) {
+      return lineStart + (column - 1);
+    }
+    return lineStart;
+  }
+
+  /** Focus the editor and select the lines of the given rule.
    *  Falls back to a no-op if the YAML is in a shape we can't parse
    *  line-by-line (flow style, etc) — the error text is still
    *  visible, just not clickable-to-highlight. */
   private jumpToRule(ruleIndex: number): void {
-    const ta = this.codeTextareaRef.value;
-    if (!ta) return;
-    const ranges = findRuleLineRanges(ta.value);
+    const cm = this.resolveCmView();
+    if (!cm) return;
+    const ranges = findRuleLineRanges(cm.text);
     const range = ranges[ruleIndex];
     if (!range) return;
-    const lines = ta.value.split('\n');
+    const lines = cm.text.split('\n');
     let startChar = 0;
     for (let i = 0; i < range.start; i++) startChar += lines[i].length + 1;
     let endChar = startChar;
     for (let i = range.start; i < range.end; i++) {
       endChar += lines[i].length + 1;
     }
-    endChar = Math.min(endChar, ta.value.length);
-    ta.focus();
-    ta.setSelectionRange(startChar, endChar);
+    endChar = Math.min(endChar, cm.text.length);
+    cm.view.focus();
+    cm.view.dispatch({
+      selection: { anchor: startChar, head: endChar },
+      scrollIntoView: true,
+    });
   }
 
-  /** Focus the textarea and either place the caret at (line, column)
+  /** Focus the editor and either place the caret at (line, column)
    *  or select the whole line when no column is given. Used for YAML
    *  syntax errors and shape errors that pin to a single source line.
    *  Line and column are 1-indexed to match the user-visible
    *  `Line N, col C` format. */
   private jumpToLine(line: number, column?: number): void {
-    const ta = this.codeTextareaRef.value;
-    if (!ta) return;
-    const lines = ta.value.split('\n');
+    const cm = this.resolveCmView();
+    if (!cm) return;
+    const lines = cm.text.split('\n');
     if (line < 1 || line > lines.length) return;
     const lineIdx = line - 1;
     let lineStart = 0;
     for (let i = 0; i < lineIdx; i++) lineStart += lines[i].length + 1;
     const lineEnd = lineStart + lines[lineIdx].length;
-    ta.focus();
-    if (column && column >= 1 && column <= lines[lineIdx].length + 1) {
-      const offset = lineStart + (column - 1);
-      ta.setSelectionRange(offset, offset);
+    const caret = this.lineColToOffset(cm.text, line, column);
+    cm.view.focus();
+    if (column && caret !== null) {
+      cm.view.dispatch({
+        selection: { anchor: caret },
+        scrollIntoView: true,
+      });
     } else {
-      ta.setSelectionRange(lineStart, lineEnd);
+      cm.view.dispatch({
+        selection: { anchor: lineStart, head: lineEnd },
+        scrollIntoView: true,
+      });
     }
   }
 
@@ -481,7 +527,10 @@ export class SmartIconsPanel extends LitElement {
           <div class="action-buttons">
             <ha-button @click=${() => this.editRule(rule)}>Edit</ha-button>
             <ha-button @click=${() => this.duplicateRule(rule)}>Duplicate</ha-button>
-            <ha-button @click=${() => this.deleteRule(rule)}>Delete</ha-button>
+            <ha-button
+              variant="danger"
+              @click=${() => this.deleteRule(rule)}
+            >Delete</ha-button>
           </div>
         </td>
       </tr>
@@ -537,64 +586,7 @@ export class SmartIconsPanel extends LitElement {
       // eslint-disable-next-line no-console
       console.error('[smart-icons-panel] failed to connect WS', err);
     }
-    void this.initOptions();
   }
-
-  /** Hydrate installation-wide options and subscribe to live changes.
-   *
-   *  Independent from `initStore` so a failure to read options doesn't
-   *  block rule loading and vice versa. Both run concurrently against
-   *  the same WS connection. On any error the local state stays at the
-   *  default (matching the backend default), so the panel remains
-   *  usable; only the checkbox may briefly lag the on-disk value. */
-  private async initOptions(): Promise<void> {
-    try {
-      const result = await this.hass.connection.sendMessagePromise<{
-        options: { outline_enabled?: boolean };
-      }>({ type: 'smart_icons/get_options' });
-      if (typeof result.options.outline_enabled === 'boolean') {
-        this.outlineEnabled = result.options.outline_enabled;
-      }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn('[smart-icons-panel] failed to read options', err);
-    }
-    try {
-      this.optionsUnsub = await this.hass.connection.subscribeEvents<{
-        data: { outline_enabled?: boolean };
-      }>((event) => {
-        if (typeof event.data.outline_enabled === 'boolean') {
-          this.outlineEnabled = event.data.outline_enabled;
-        }
-      }, 'smart_icons_options_updated');
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[smart-icons-panel] failed to subscribe to options updates',
-        err,
-      );
-    }
-  }
-
-  private toggleOutline = async (e: Event): Promise<void> => {
-    const checked = (e.target as HTMLInputElement).checked;
-    // Optimistic local update — the bus event will reconcile if
-    // something diverges. Saves a flicker on slow connections.
-    this.outlineEnabled = checked;
-    try {
-      await this.hass.connection.sendMessagePromise({
-        type: 'smart_icons/update_options',
-        options: { outline_enabled: checked },
-      });
-    } catch (err) {
-      // Roll back the optimistic update and surface the error.
-      this.outlineEnabled = !checked;
-      this.actionError =
-        err instanceof Error
-          ? `Failed to update options: ${err.message}`
-          : 'Failed to update options.';
-    }
-  };
 
   // ---- actions ----
 

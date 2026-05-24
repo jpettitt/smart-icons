@@ -94,33 +94,6 @@ export const panelStyles = css`
     gap: 8px;
     margin-top: 20px;
   }
-  /* Installation-wide options row above the rules table. Uses HA's
-     native <ha-switch> per the project's no-bare-form-elements
-     rule. Label on the left, switch slotted to the right via flex. */
-  .options-row {
-    margin-bottom: 16px;
-    padding: 12px 16px;
-    background: var(--secondary-background-color, #f5f5f5);
-    border-radius: 8px;
-  }
-  .option-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    cursor: pointer;
-  }
-  .option-label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
-  }
-  .option-help {
-    font-size: 0.875em;
-    color: var(--secondary-text-color, #757575);
-    line-height: 1.4;
-  }
   /* "Show code editor" / "Show visual editor" toggle. Plain text in
      the primary color — matches HA's automation-editor pattern. */
   .text-toggle {
@@ -146,29 +119,18 @@ export const panelStyles = css`
     opacity: 0.5;
     cursor: not-allowed;
   }
-  /* YAML textarea for the panel's whole-config code view. Same shape
-     as the editor's .yaml-area (the two stylesheets are scoped to
-     different shadow roots, so each one declares it once). */
+  /* ha-code-editor sizing for the panel's whole-config code view.
+     The element internally hosts a CodeMirror 6 surface; we just
+     constrain its outer block to the same min/max height the prior
+     bare textarea had so the layout stays familiar. ha-code-editor
+     paints its own border, focus ring, and font, so the rest of the
+     v0.3.0a2 textarea styling is gone. */
   .yaml-area {
+    display: block;
     width: 100%;
     min-height: 420px;
     max-height: 70vh;
     box-sizing: border-box;
-    padding: 10px 12px;
-    background: var(--code-editor-background-color, var(--card-background-color, #fff));
-    color: var(--primary-text-color, #212121);
-    border: 1px solid var(--divider-color, #e0e0e0);
-    border-radius: 4px;
-    font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
-    font-size: 0.9em;
-    line-height: 1.4;
-    resize: vertical;
-    white-space: pre;
-    tab-size: 2;
-  }
-  .yaml-area:focus {
-    outline: none;
-    border-color: var(--primary-color, #03a9f4);
   }
   /* Inline error block below the YAML textarea (parse failures,
      server validation failures, transport errors). Wider than the
@@ -629,10 +591,81 @@ export const editorStyles = css`
   }
   .threshold-row-fields {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    min-width: 0;
+  }
+  /* Row 1 of a threshold entry: comparator dropdown + value field
+     side by side. Comparator expands to fit its full text labels
+     ("Greater than or equal" etc.); value gets a fixed narrow
+     budget — threshold values are typically 1-4 digits so the
+     wider input was wasted space. */
+  .threshold-comparator-row {
+    display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
+  }
+  .threshold-comparator-row ha-selector {
+    flex: 1 1 auto;
+    min-width: 0;
+    /* Default ha-select font-size renders the comparator labels
+       too small. Bump the host font-size and weight; the inner
+       md-outlined-select inherits both. */
+    font-size: 1.15em;
+    font-weight: 600;
+  }
+  .threshold-comparator-row ha-input {
+    flex: 0 0 120px;
+    min-width: 0;
+    /* Match the comparator dropdown's typography so the
+       Comparator and Value rows visually align baseline-to-baseline. */
+    font-size: 1.15em;
+    font-weight: 600;
+  }
+  /* Foreground + background color pair on a single row. CSS Grid
+     with two equal columns guarantees the children sit side-by-side
+     regardless of their natural width — flex with flex-basis was
+     wrapping when each swatch-input's natural width exceeded half
+     the container. */
+  .color-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: center;
+    min-width: 0;
+  }
+  .color-pair .swatch-input {
+    min-width: 0;
+  }
+  .color-pair .swatch-input ha-input {
+    min-width: 0;
+    width: 100%;
+  }
+  /* Mapping-row layout mirrors the threshold-row content column: a
+     single column-flex container that stacks State, the color pair,
+     the icon picker, and the Delete button. Delete sits bottom-right
+     via align-self: flex-end on the .row-delete class. */
+  .mapping-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 0;
+    border-top: 1px solid var(--divider-color, #e0e0e0);
+    min-width: 0;
+  }
+  .mapping-row:first-of-type {
+    border-top: none;
+  }
+  /* Per-row Delete button (ha-button variant="danger"). Right-aligned
+     at the bottom of either a threshold or mapping row's content
+     column. Width hugs its content rather than stretching to fill,
+     which is the default ha-button behavior; align-self moves it
+     against the right edge. */
+  .row-delete {
+    align-self: flex-end;
   }
   /* Drag handle for ha-sortable threshold reordering. The grab/grabbing
      cursors match HA's own area / dashboard / automation editors;
@@ -841,29 +874,15 @@ export const editorStyles = css`
     outline: 2px solid var(--primary-color, #03a9f4);
     outline-offset: 1px;
   }
-  /* YAML textarea used by the editor's code-editor mode. Same shape
-     as the panel's import dialog (the panel duplicates this in its
-     own stylesheet — both use HA's CSS variables for theming). */
+  /* ha-code-editor sizing for the editor's per-rule code-editor
+     mode. Matches the panel's whole-config view in styles.ts; the
+     element handles its own border/font/focus styling internally. */
   .yaml-area {
+    display: block;
     width: 100%;
     min-height: 320px;
     max-height: 60vh;
     box-sizing: border-box;
-    padding: 10px 12px;
-    background: var(--code-editor-background-color, var(--card-background-color, #fff));
-    color: var(--primary-text-color, #212121);
-    border: 1px solid var(--divider-color, #e0e0e0);
-    border-radius: 4px;
-    font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
-    font-size: 0.9em;
-    line-height: 1.4;
-    resize: vertical;
-    white-space: pre;
-    tab-size: 2;
-  }
-  .yaml-area:focus {
-    outline: none;
-    border-color: var(--primary-color, #03a9f4);
   }
   .error {
     color: var(--error-color, #db4437);

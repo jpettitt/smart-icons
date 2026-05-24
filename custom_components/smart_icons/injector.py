@@ -1,26 +1,40 @@
-"""Server-side icon and color injection.
+"""Server-side icon, color, and background injection.
 
 Subscribes to `state_changed` events for every rule's `source` entity.
-On each change, evaluates the relevant rules and writes the winning
+On each change, evaluates the relevant rules and writes the merged
 decoration onto the matching `target` entity's state attributes:
 
-  - `icon`             → HA's standard glyph attribute. `ha-state-icon`
-                         reads this natively — no frontend cooperation
-                         needed for the glyph.
-  - `smart_icons_color` → our namespaced color hint. The frontend
-                         painter reads it and applies `style.color`,
-                         since HA has no native attribute for icon color.
+  - `icon`                  → HA's standard glyph attribute. `ha-state-icon`
+                              reads this natively — no frontend cooperation
+                              needed for the glyph.
+  - `smart_icons_color`      → our namespaced color hint. The frontend
+                              painter reads it and applies `style.color`,
+                              since HA has no native attribute for icon
+                              color.
+  - `smart_icons_background` → background-chip color (Mushroom-style
+                              colored circle behind the icon). Read by
+                              the same painter that handles the color
+                              attribute. Independent of `color` —
+                              either, both, or neither may be set.
 
 This avoids the DOM-mutation races we hit when patching `<ha-icon>`
 properties from the frontend painter: we're upstream of every Lit
 render, and the icon update flows through the same code path templated
 entities already use.
 
-Trade-offs accepted in v0.1:
-- We don't restore the original `icon` attribute on rule deletion.
-  Whatever value we last wrote stays until the source integration
-  pushes its own state update. Acceptable because users typically don't
-  delete rules in production and the integration corrects it eventually.
+Icon clearing semantics:
+- When a rule drops its `icon` field (edit) or the rule is removed
+  (delete), we pop the `icon` attribute from the target's state IFF
+  the current value still equals what we last wrote. This restores
+  HA's default fallback (domain / device-class icon) and avoids
+  the "stale icon sticks forever" surprise that plagued v0.1/0.2.
+- If the source integration overwrote our icon between the time we
+  set it and the time we'd clear it, the current value won't match
+  our recorded last-write and we leave the source's value alone.
+  `_injected_icons` (target → last-written icon string) is the
+  bookkeeping that makes this safe.
+
+Other trade-offs:
 - Calling `hass.states.async_set` fires `state_changed`, which can wake
   automations that trigger on raw events. Most automations trigger on
   state transitions, not attribute changes; we accept the rare edge.
@@ -36,8 +50,8 @@ from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import ATTR_ICON, ATTR_SMART_ICONS_COLOR
-from .evaluator import evaluate_rule, pick_winner
+from .const import ATTR_ICON, ATTR_SMART_ICONS_BACKGROUND, ATTR_SMART_ICONS_COLOR
+from .evaluator import evaluate_rule, merge_decorations
 from .rule import Rule
 from .store import RuleStore
 
@@ -59,9 +73,25 @@ class IconInjector:
         self._unsub_registry: Callable[[], None] | None = None
         self._unsub_new_entity: Callable[[], None] | None = None
         self._tracked_sources: set[str] = set()
-        # Targets we've written into, so we can release color cleanly on
-        # rule removal. Icon is left as-is per the trade-off above.
+        # Targets we've written color/background into, so we can clear
+        # cleanly on rule removal.
         self._injected_targets: set[str] = set()
+        # Per-target record of the last `icon` value we wrote. Used to
+        # tell "our icon" from "the source's icon" when deciding
+        # whether to pop the attribute on rule edit/delete.
+        self._injected_icons: dict[str, str] = {}
+        # Per-rule resolved target sets (rule.id → set of entity_ids).
+        # `_resolve_targets` builds entries lazily and we invalidate
+        # surgically rather than blowing the cache away on every state
+        # change: rule changes invalidate the affected rule's entry;
+        # entity_registry_updated invalidates every rule that uses a
+        # glob target; a new entity appearing on the bus invalidates
+        # only the glob rules that could possibly match it. Literal-
+        # only rules never need invalidation (entity ids don't change).
+        # Without this cache the injector ran fnmatch.filter over
+        # `hass.states.async_entity_ids()` on every relevant state
+        # change — O(rules × globs × entities) on busy installs.
+        self._resolved_cache: dict[str, set[str]] = {}
 
     @callback
     def async_start(self) -> None:
@@ -107,7 +137,7 @@ class IconInjector:
         if self._unsub_new_entity:
             self._unsub_new_entity()
             self._unsub_new_entity = None
-        for target in list(self._injected_targets):
+        for target in list(self._injected_targets | set(self._injected_icons)):
             self._release_target(target)
         self._tracked_sources.clear()
 
@@ -118,11 +148,17 @@ class IconInjector:
         # Rule set changed. The source-tracking subscription may need to
         # widen or narrow; any previously-injected target that no longer
         # has a matching rule should be released.
+        #
+        # Drop the changed rule's cached resolution so the new targets
+        # list (if any) is recomputed on the next access. We don't need
+        # to touch other rules' entries: their target lists didn't
+        # change, and the entity set is unaffected by store events.
+        self._invalidate_resolution(rule.id)
         self._rebuild_subscription()
         for target in self._resolve_targets(rule):
             self._apply_target(target)
         active = self._active_targets()
-        for target in list(self._injected_targets):
+        for target in list(self._injected_targets | set(self._injected_icons)):
             if target not in active:
                 self._release_target(target)
 
@@ -131,7 +167,12 @@ class IconInjector:
         """A new entity may now match a glob in some rule — re-apply
         the rules that have glob targets so newly-eligible entities get
         decorated. Cheap: only rules with globs are walked, and apply
-        is a per-entity O(1) attribute write."""
+        is a per-entity O(1) attribute write.
+
+        Entity-registry events change which ids exist, so any cached
+        glob-resolution is potentially stale — invalidate first.
+        Literal-only rules are unaffected and their cache survives. """
+        self._invalidate_glob_rules()
         self._reapply_glob_rules()
 
     @callback
@@ -155,6 +196,12 @@ class IconInjector:
         # before touching the rule store.
         if not self._any_glob_matches(entity_id):
             return
+        # The new entity may belong in a cached glob set we already
+        # computed — invalidate every glob rule's resolution so the
+        # next read picks the entity up. Literal-only rules can stay
+        # cached; their resolution is independent of state-machine
+        # composition.
+        self._invalidate_glob_rules()
         self._rebuild_subscription()
         self._apply_target(entity_id)
 
@@ -222,7 +269,21 @@ class IconInjector:
     def _resolve_targets(self, rule: Rule) -> set[str]:
         """Expand a rule's `targets` list into the concrete set of entity
         ids it currently applies to. Literals pass through; globs are
-        matched against current `hass.states` keys with fnmatch."""
+        matched against current `hass.states` keys with fnmatch.
+
+        Result is cached per rule id in `_resolved_cache`. The cache
+        survives across `_apply_target`, `_active_targets`,
+        `_targets_for_source`, and `_rebuild_subscription` calls
+        within a single event burst — on a busy install this is the
+        difference between O(rules × globs × entities) and O(1)
+        per lookup. Invalidation is handled by `_on_store_event`,
+        `_on_entity_registry_event`, and
+        `_on_state_changed_for_new_entity`.
+        """
+        if rule.id:
+            cached = self._resolved_cache.get(rule.id)
+            if cached is not None:
+                return cached
         out: set[str] = set()
         all_ids: list[str] | None = None  # lazily fetched once per call
         for entry in rule.targets:
@@ -232,7 +293,37 @@ class IconInjector:
                 out.update(fnmatch.filter(all_ids, entry))
             else:
                 out.add(entry)
+        if rule.id:
+            self._resolved_cache[rule.id] = out
         return out
+
+    @callback
+    def _invalidate_resolution(self, rule_id: str | None = None) -> None:
+        """Drop cached target resolutions.
+
+        With no argument: full invalidation (e.g. entity-registry
+        changes alter what every glob rule can match).
+
+        With a `rule_id`: drop just that rule's entry. Used when one
+        rule's targets list changed but the rest of the cache is
+        still valid.
+        """
+        if rule_id is None:
+            self._resolved_cache.clear()
+            return
+        self._resolved_cache.pop(rule_id, None)
+
+    @callback
+    def _invalidate_glob_rules(self) -> None:
+        """Drop cached entries for every rule that uses any glob
+        target. New-entity / entity-registry events can change which
+        entity ids match a glob, but literal-only rules are
+        unaffected — their resolved set is just the literals."""
+        for rule in self._store.all():
+            if not rule.id:
+                continue
+            if any(_is_glob(t) for t in rule.targets):
+                self._resolved_cache.pop(rule.id, None)
 
     def _active_targets(self) -> set[str]:
         active: set[str] = set()
@@ -301,7 +392,7 @@ class IconInjector:
                     source_value = source_state.state
             decisions.append((rule, evaluate_rule(rule, source_value)))
 
-        winner = pick_winner(decisions)
+        winner = merge_decorations(decisions)
         if winner is None:
             self._release_target(target)
             return
@@ -317,9 +408,24 @@ class IconInjector:
         changed = False
 
         winning_icon = winner.get("icon")
-        if winning_icon is not None and new_attrs.get(ATTR_ICON) != winning_icon:
-            new_attrs[ATTR_ICON] = winning_icon
-            changed = True
+        if winning_icon is not None:
+            if new_attrs.get(ATTR_ICON) != winning_icon:
+                new_attrs[ATTR_ICON] = winning_icon
+                changed = True
+            self._injected_icons[target] = winning_icon
+        else:
+            # Rule no longer specifies an icon. Pop the attribute only
+            # if the value still matches what we last wrote — if the
+            # source integration has since replaced it with its own
+            # icon, that's not ours to clear.
+            last_written = self._injected_icons.get(target)
+            if (
+                last_written is not None
+                and new_attrs.get(ATTR_ICON) == last_written
+            ):
+                new_attrs.pop(ATTR_ICON, None)
+                changed = True
+            self._injected_icons.pop(target, None)
 
         winning_color = winner.get("color")
         if winning_color is not None:
@@ -330,6 +436,19 @@ class IconInjector:
             new_attrs.pop(ATTR_SMART_ICONS_COLOR)
             changed = True
 
+        # Background color: same set-or-clear pattern as color. When
+        # set, the painter renders a Mushroom-style colored chip
+        # behind the icon. When cleared, the painter strips the
+        # background styling.
+        winning_bg = winner.get("background_color")
+        if winning_bg is not None:
+            if new_attrs.get(ATTR_SMART_ICONS_BACKGROUND) != winning_bg:
+                new_attrs[ATTR_SMART_ICONS_BACKGROUND] = winning_bg
+                changed = True
+        elif ATTR_SMART_ICONS_BACKGROUND in new_attrs:
+            new_attrs.pop(ATTR_SMART_ICONS_BACKGROUND)
+            changed = True
+
         if not changed:
             return
 
@@ -338,15 +457,31 @@ class IconInjector:
 
     @callback
     def _release_target(self, target: str) -> None:
-        """Strip the smart_icons_color attribute. Icon is left as-is."""
-        if target not in self._injected_targets:
+        """Strip every attribute this injector ever wrote for `target`:
+        smart_icons_color, smart_icons_background, and icon (the last
+        only when the current value still equals what we last wrote —
+        see file header). HA's frontend falls back to the
+        domain/device-class default when `icon` is popped, which is the
+        right behavior on rule deletion."""
+        had_icon_record = target in self._injected_icons
+        if target not in self._injected_targets and not had_icon_record:
             return
         self._injected_targets.discard(target)
+        last_icon = self._injected_icons.pop(target, None)
         current = self._hass.states.get(target)
         if current is None:
             return
-        if ATTR_SMART_ICONS_COLOR not in current.attributes:
+        had_color = ATTR_SMART_ICONS_COLOR in current.attributes
+        had_bg = ATTR_SMART_ICONS_BACKGROUND in current.attributes
+        icon_is_ours = (
+            last_icon is not None
+            and current.attributes.get(ATTR_ICON) == last_icon
+        )
+        if not (had_color or had_bg or icon_is_ours):
             return
         new_attrs = dict(current.attributes)
-        new_attrs.pop(ATTR_SMART_ICONS_COLOR)
+        new_attrs.pop(ATTR_SMART_ICONS_COLOR, None)
+        new_attrs.pop(ATTR_SMART_ICONS_BACKGROUND, None)
+        if icon_is_ours:
+            new_attrs.pop(ATTR_ICON, None)
         self._hass.states.async_set(target, current.state, new_attrs)
