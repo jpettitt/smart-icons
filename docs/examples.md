@@ -377,9 +377,34 @@ differently across parsers; quoting removes that risk.
 You can have both — direction-aware sunrise / sunset glyphs while the
 sun is near the horizon, and elevation-banded colors the rest of the
 time — by exploiting Smart Icons' priority + no-`_else` fallthrough.
-The table walks six representative angles through both rules and
-shows what the user ends up seeing; paste the YAML in the right-hand
-column as a whole-config block, or paste the two rules individually.
+
+Here's what the user ends up seeing at six representative angles:
+
+<table>
+<tr>
+  <th align="left">Angle</th>
+  <td align="center">−20°</td>
+  <td align="center">−10°</td>
+  <td align="center">−3°</td>
+  <td align="center">+3°</td>
+  <td align="center">+10°</td>
+  <td align="center">+40°</td>
+</tr>
+<tr>
+  <th align="left">Icon</th>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=32" alt="weather night" /></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night-partly-cloudy.svg?color=%231a1f4a&width=32" alt="partly cloudy night" /></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-up.svg?color=%23ff8c00&width=32" alt="sunset up" /></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=32" alt="sunset down" /></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-hazy.svg?color=%23ffd700&width=32" alt="weather hazy" /></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-sunny.svg?color=%23ffeb3b&width=32" alt="sunny" /></td>
+</tr>
+</table>
+
+The detail table below shows how each rule contributes and how the
+priorities interact to produce that result; paste the YAML in the
+right-hand column as a whole-config block, or paste the two rules
+individually.
 
 <table>
 <thead>
@@ -397,8 +422,8 @@ column as a whole-config block, or paste the two rules individually.
   <td align="center">−20°</td>
   <td align="center">setting<br><sub><code>'False'</code></sub></td>
   <td align="center"><img src="https://api.iconify.design/mdi/weather-sunset-down.svg?color=%23ff4500&width=28" alt="sunset down" /><br><code>mdi:weather-sunset-down</code><br><code>#ff4500</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%230d1233&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#0d1233</code></td>
-  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%230d1233&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#0d1233</code><br><sub><em>Rule 2 wins</em></sub></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code></td>
+  <td align="center"><img src="https://api.iconify.design/mdi/weather-night.svg?color=%234a6fbb&width=28" alt="weather night" /><br><code>mdi:weather-night</code><br><code>#4a6fbb</code><br><sub><em>Rule 2 wins</em></sub></td>
   <td rowspan="6">
 
 ```yaml
@@ -428,7 +453,7 @@ rules:
     mode: thresholds
     thresholds:
       - lt: -12
-        color: '#0d1233'
+        color: '#4a6fbb'
         icon: mdi:weather-night
       - lt: -6
         color: '#1a1f4a'
