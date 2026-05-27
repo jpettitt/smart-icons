@@ -38,6 +38,18 @@ Other trade-offs:
 - Calling `hass.states.async_set` fires `state_changed`, which can wake
   automations that trigger on raw events. Most automations trigger on
   state transitions, not attribute changes; we accept the rare edge.
+
+Recorder hint:
+- Every `async_set` call carries a `state_info` declaring
+  `smart_icons_color` and `smart_icons_background` as unrecorded
+  attributes (see `_state_info_excluding_smart_icons`). The recorder
+  reads this and strips those keys from the JSON it persists, so our
+  decoration writes don't bloat the state_attributes table on large
+  installs with broad glob rules. The `state_changed` event still
+  fires (the painter needs it); only the database-side payload
+  shrinks. The merge with any existing `unrecorded_attributes` is
+  load-bearing — entities with their own exclusions (e.g. sensor's
+  `last_reset`) would otherwise have those clobbered.
 """
 
 from __future__ import annotations
@@ -47,7 +59,8 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.const import EVENT_STATE_CHANGED
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, State, callback
+from homeassistant.helpers.entity import StateInfo
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import ATTR_ICON, ATTR_SMART_ICONS_BACKGROUND, ATTR_SMART_ICONS_COLOR
@@ -56,6 +69,32 @@ from .rule import Rule
 from .store import RuleStore
 
 _GLOB_CHARS = ("*", "?", "[")
+
+# Attribute keys the injector writes that aren't worth recording. The
+# recorder reads `state.state_info["unrecorded_attributes"]` and strips
+# matching keys from the JSON it persists to the state_attributes table
+# (see homeassistant/components/recorder/db_schema.py). Excluding our
+# decoration attrs cuts a lot of recorder noise on large installs with
+# broad glob rules — every state_changed event still fires (the painter
+# needs it), but the recorder's stored row shrinks and adjacent
+# state_attributes dedupe better. `ATTR_ICON` is HA's standard glyph
+# attribute that other integrations and templates legitimately change,
+# so we leave it recordable.
+_SMART_ICONS_UNRECORDED_ATTRS: frozenset[str] = frozenset(
+    {ATTR_SMART_ICONS_COLOR, ATTR_SMART_ICONS_BACKGROUND}
+)
+
+
+def _state_info_excluding_smart_icons(current: State) -> StateInfo:
+    """Merge the entity's existing `unrecorded_attributes` (if any) with
+    our smart-icons-specific keys. Preserving the entity-owner's
+    declarations matters: some integrations declare their own
+    unrecorded attrs (e.g. `last_reset` on a sensor), and a bare
+    `state_info` from our `async_set` would clobber them, suddenly
+    recording attrs the integration author chose to exclude."""
+    existing = current.state_info or {}
+    existing_unrec = existing.get("unrecorded_attributes") or frozenset()
+    return {"unrecorded_attributes": existing_unrec | _SMART_ICONS_UNRECORDED_ATTRS}
 
 
 def _is_glob(entry: str) -> bool:
@@ -452,7 +491,12 @@ class IconInjector:
         if not changed:
             return
 
-        self._hass.states.async_set(target, current.state, new_attrs)
+        self._hass.states.async_set(
+            target,
+            current.state,
+            new_attrs,
+            state_info=_state_info_excluding_smart_icons(current),
+        )
         self._injected_targets.add(target)
 
     @callback
@@ -484,4 +528,9 @@ class IconInjector:
         new_attrs.pop(ATTR_SMART_ICONS_BACKGROUND, None)
         if icon_is_ours:
             new_attrs.pop(ATTR_ICON, None)
-        self._hass.states.async_set(target, current.state, new_attrs)
+        self._hass.states.async_set(
+            target,
+            current.state,
+            new_attrs,
+            state_info=_state_info_excluding_smart_icons(current),
+        )
