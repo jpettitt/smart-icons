@@ -849,3 +849,29 @@ async def test_injector_does_not_clobber_source_overwritten_icon(
 
     state = hass.states.get("light.kitchen")
     assert state.attributes[ATTR_ICON] == "mdi:source-owned-icon"
+
+
+async def test_injector_handles_target_vanishing_mid_runtime(
+    hass, config_entry  # noqa: ARG001
+):
+    """When a target entity is removed from the state machine after we
+    decorated it, subsequent state changes for its source must not
+    crash. _apply_target reads hass.states.get(target) → None → return
+    early without writing. The bookkeeping entries persist (which is
+    fine; they get cleaned up on async_stop or rule deletion)."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+    await store.async_upsert(_mapping_rule())
+    await hass.async_block_till_done()
+    assert ATTR_SMART_ICONS_COLOR in hass.states.get("light.kitchen").attributes
+
+    # Target entity vanishes (e.g. owning integration unloaded).
+    hass.states.async_remove("light.kitchen")
+    await hass.async_block_till_done()
+
+    # Source state change after the target is gone — should not crash.
+    hass.states.async_set("input_select.scene", "party")
+    await hass.async_block_till_done()
+    # No exception → pass. State machine doesn't grow a fresh entity.
+    assert hass.states.get("light.kitchen") is None

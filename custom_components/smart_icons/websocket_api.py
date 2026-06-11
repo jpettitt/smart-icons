@@ -10,6 +10,8 @@ concern by design.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -29,7 +31,25 @@ from .const import (
 )
 from .rule import BulkReplaceError, Rule
 
-INTEGRATION_VERSION = "0.3.0"
+
+def _read_integration_version() -> str:
+    """Read the integration version from manifest.json at import time.
+
+    Avoids the version drift trap where bumping `manifest.json` for a
+    release misses a hardcoded duplicate here. Reads once at module
+    import — the version doesn't change between restarts."""
+    manifest_path = Path(__file__).parent / "manifest.json"
+    try:
+        with manifest_path.open() as f:
+            return str(json.load(f).get("version", "0.0.0"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        # Defensive fallback for misconfigured installs. The version
+        # is informational only — used in the version WS response —
+        # so a bad value is better than blocking module import.
+        return "0.0.0"
+
+
+INTEGRATION_VERSION = _read_integration_version()
 
 
 def async_register_commands(hass: HomeAssistant) -> None:
@@ -101,6 +121,14 @@ async def _ws_delete(
     connection.send_result(msg["id"], {"success": True})
 
 
+#: Cap on `rules` list length in a single replace_all payload. Real
+#: installs have at most a few dozen rules; 1000 leaves a wide margin
+#: while bounding the synchronous validation loop. Admin-gated, so the
+#: attack surface is the admin themselves (or a leaked admin token),
+#: but bounding the loop is cheap defense-in-depth.
+_MAX_REPLACE_ALL_RULES = 1000
+
+
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
@@ -110,7 +138,9 @@ async def _ws_delete(
         # here so the store's per-rule validator can attach a precise
         # index to each failure (better UX than failing fast on the
         # first bad rule).
-        vol.Required("rules"): [dict],
+        vol.Required("rules"): vol.All(
+            [dict], vol.Length(max=_MAX_REPLACE_ALL_RULES)
+        ),
     }
 )
 @websocket_api.async_response

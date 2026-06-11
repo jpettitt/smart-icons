@@ -22,7 +22,11 @@
 
 import { Painter, patchHaStateIcon, type PatchResult } from './painter';
 import { StateWatcher } from './state-watcher';
-import type { Hass } from './types';
+import {
+  SMART_ICONS_BACKGROUND_ATTR,
+  SMART_ICONS_COLOR_ATTR,
+  type Hass,
+} from './types';
 
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 30_000;
@@ -85,12 +89,31 @@ async function bootstrap(): Promise<void> {
   const watcher = new StateWatcher(hass.connection);
   const painter = new Painter(watcher);
 
-  // Painter is state-driven: any source/target state change can affect
-  // a painted host's smart_icons_color attribute, so re-evaluate on each.
-  // The backend injector is the authority — we just bridge attribute →
-  // CSS color here. A blanket repaintAll() per change is fine (it's
-  // microtask-batched and per-host evaluation is O(1)).
-  watcher.onChange(() => painter.repaintAll());
+  // Painter is state-driven: a state_changed event for an entity we
+  // decorate can change its smart_icons_color / smart_icons_background
+  // and we need to repaint. But the watcher fires for EVERY state_changed
+  // event in HA — most are for entities Smart Icons doesn't touch
+  // (sensors updating, switches toggling, weather rolling). Paying the
+  // microtask + crawl cost for those is wasted work on busy installs.
+  //
+  // Filter: only repaint when EITHER the previous or current attribute
+  // bag for the changed entity carried one of our two keys. "Previous"
+  // is necessary so we catch the transition where the backend clears
+  // our decoration (the new bag is missing the keys; without the
+  // "previous" arm we'd skip the repaint and the old inline style
+  // would linger).
+  watcher.onChange((_id, _state, oldAttrs, newAttrs) => {
+    const wasOurs =
+      oldAttrs !== undefined &&
+      (SMART_ICONS_COLOR_ATTR in oldAttrs ||
+        SMART_ICONS_BACKGROUND_ATTR in oldAttrs);
+    const isOurs =
+      newAttrs !== undefined &&
+      (SMART_ICONS_COLOR_ATTR in newAttrs ||
+        SMART_ICONS_BACKGROUND_ATTR in newAttrs);
+    if (!wasOurs && !isOurs) return;
+    painter.repaintAll();
+  });
 
   painter.start();
 

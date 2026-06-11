@@ -211,7 +211,7 @@ class IconInjector:
         to each matched target. Refreshes the source-state subscription
         in case the resolved set has changed."""
         self._rebuild_subscription()
-        for rule in self._store.all():
+        for rule in self._store.all_view():
             if not rule.enabled:
                 continue
             if not any(_is_glob(t) for t in rule.targets):
@@ -223,7 +223,7 @@ class IconInjector:
     def _any_glob_matches(self, entity_id: str) -> bool:
         """True iff any enabled rule has a glob target that matches the
         given entity id. Cheap pre-check for the state-changed handler."""
-        for rule in self._store.all():
+        for rule in self._store.all_view():
             if not rule.enabled:
                 continue
             for t in rule.targets:
@@ -234,7 +234,7 @@ class IconInjector:
     @callback
     def _rebuild_subscription(self) -> None:
         sources: set[str] = set()
-        for r in self._store.all():
+        for r in self._store.all_view():
             if not r.enabled:
                 continue
             if r.source:
@@ -319,7 +319,7 @@ class IconInjector:
         target. New-entity / entity-registry events can change which
         entity ids match a glob, but literal-only rules are
         unaffected — their resolved set is just the literals."""
-        for rule in self._store.all():
+        for rule in self._store.all_view():
             if not rule.id:
                 continue
             if any(_is_glob(t) for t in rule.targets):
@@ -327,7 +327,7 @@ class IconInjector:
 
     def _active_targets(self) -> set[str]:
         active: set[str] = set()
-        for r in self._store.all():
+        for r in self._store.all_view():
             if r.enabled:
                 active |= self._resolve_targets(r)
         return active
@@ -341,7 +341,7 @@ class IconInjector:
         target's state change.
         """
         out: set[str] = set()
-        for r in self._store.all():
+        for r in self._store.all_view():
             if not r.enabled:
                 continue
             resolved = self._resolve_targets(r)
@@ -363,7 +363,7 @@ class IconInjector:
         # (literal or glob) resolves to this entity_id.
         rules = [
             r
-            for r in self._store.all()
+            for r in self._store.all_view()
             if r.enabled and target in self._resolve_targets(r)
         ]
         if not rules:
@@ -404,53 +404,74 @@ class IconInjector:
             # will re-evaluate.
             return
 
-        new_attrs: dict[str, Any] = dict(current.attributes)
-        changed = False
-
+        # Pre-flight: compare what we'd write against `current.attributes`
+        # WITHOUT copying the dict. The hot path on busy installs is
+        # "evaluation re-fires because our own async_set triggered the
+        # state-change handler again," and on that pass nothing should
+        # change. Copying the attributes dict before discovering that
+        # was an O(N_attrs) allocation per no-op pass.
+        current_attrs = current.attributes
         winning_icon = winner.get("icon")
+        winning_color = winner.get("color")
+        winning_bg = winner.get("background_color")
+
+        # Icon: set when the rule addresses it, pop only when it still
+        # matches the last value we wrote (avoid clobbering the source
+        # integration's icon if it overwrote ours since).
+        last_icon = self._injected_icons.get(target)
         if winning_icon is not None:
-            if new_attrs.get(ATTR_ICON) != winning_icon:
-                new_attrs[ATTR_ICON] = winning_icon
-                changed = True
+            icon_set = current_attrs.get(ATTR_ICON) != winning_icon
+            icon_pop = False
+        else:
+            icon_set = False
+            icon_pop = (
+                last_icon is not None
+                and current_attrs.get(ATTR_ICON) == last_icon
+            )
+
+        color_set = (
+            winning_color is not None
+            and current_attrs.get(ATTR_SMART_ICONS_COLOR) != winning_color
+        )
+        color_pop = (
+            winning_color is None and ATTR_SMART_ICONS_COLOR in current_attrs
+        )
+
+        bg_set = (
+            winning_bg is not None
+            and current_attrs.get(ATTR_SMART_ICONS_BACKGROUND) != winning_bg
+        )
+        bg_pop = (
+            winning_bg is None and ATTR_SMART_ICONS_BACKGROUND in current_attrs
+        )
+
+        # Bookkeeping for icon ownership runs regardless of whether the
+        # on-state attribute actually changes. We claim ownership any
+        # time the rule addresses icon (so future drops re-pop it), and
+        # release ownership any time the rule stops addressing icon —
+        # this mirrors the original semantics and is independent of
+        # whether the cascading `async_set` is fired.
+        if winning_icon is not None:
             self._injected_icons[target] = winning_icon
         else:
-            # Rule no longer specifies an icon. Pop the attribute only
-            # if the value still matches what we last wrote — if the
-            # source integration has since replaced it with its own
-            # icon, that's not ours to clear.
-            last_written = self._injected_icons.get(target)
-            if (
-                last_written is not None
-                and new_attrs.get(ATTR_ICON) == last_written
-            ):
-                new_attrs.pop(ATTR_ICON, None)
-                changed = True
             self._injected_icons.pop(target, None)
 
-        winning_color = winner.get("color")
-        if winning_color is not None:
-            if new_attrs.get(ATTR_SMART_ICONS_COLOR) != winning_color:
-                new_attrs[ATTR_SMART_ICONS_COLOR] = winning_color
-                changed = True
-        elif ATTR_SMART_ICONS_COLOR in new_attrs:
-            new_attrs.pop(ATTR_SMART_ICONS_COLOR)
-            changed = True
-
-        # Background color: same set-or-clear pattern as color. When
-        # set, the painter renders a Mushroom-style colored chip
-        # behind the icon. When cleared, the painter strips the
-        # background styling.
-        winning_bg = winner.get("background_color")
-        if winning_bg is not None:
-            if new_attrs.get(ATTR_SMART_ICONS_BACKGROUND) != winning_bg:
-                new_attrs[ATTR_SMART_ICONS_BACKGROUND] = winning_bg
-                changed = True
-        elif ATTR_SMART_ICONS_BACKGROUND in new_attrs:
-            new_attrs.pop(ATTR_SMART_ICONS_BACKGROUND)
-            changed = True
-
-        if not changed:
+        if not (icon_set or icon_pop or color_set or color_pop or bg_set or bg_pop):
             return
+
+        new_attrs: dict[str, Any] = dict(current_attrs)
+        if icon_set:
+            new_attrs[ATTR_ICON] = winning_icon
+        elif icon_pop:
+            new_attrs.pop(ATTR_ICON, None)
+        if color_set:
+            new_attrs[ATTR_SMART_ICONS_COLOR] = winning_color
+        elif color_pop:
+            new_attrs.pop(ATTR_SMART_ICONS_COLOR)
+        if bg_set:
+            new_attrs[ATTR_SMART_ICONS_BACKGROUND] = winning_bg
+        elif bg_pop:
+            new_attrs.pop(ATTR_SMART_ICONS_BACKGROUND)
 
         self._hass.states.async_set(target, current.state, new_attrs)
         self._injected_targets.add(target)

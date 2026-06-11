@@ -74,6 +74,15 @@ class RuleStore:
         return list(self._rules.values())
 
     @callback
+    def all_view(self):  # type: ignore[no-untyped-def]
+        """Return a live view of stored rules — does NOT allocate a new
+        list. Safe to iterate from event-loop callbacks (single-threaded;
+        no concurrent modification). Use this on hot paths in the
+        injector that call `all()` multiple times per state event; use
+        `all()` everywhere else when a stable snapshot is wanted."""
+        return self._rules.values()
+
+    @callback
     def get(self, rule_id: str) -> Rule | None:
         return self._rules.get(rule_id)
 

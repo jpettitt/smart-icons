@@ -97,11 +97,73 @@ def _threshold_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return validated
 
 
+#: Cap on the number of entries a single `mapping` may have. Real-world
+#: mappings are small (e.g. ~12 weather conditions, ~5 lock states); a
+#: 200-entry cap is generous and bounds the evaluator's per-event scan.
+_MAX_MAPPING_ENTRIES = 200
+
+#: Cap on the number of entries a single `thresholds` rule may have.
+#: Numeric thresholds for "color by value" patterns rarely exceed ~20;
+#: 50 leaves headroom while still rejecting pathological payloads.
+_MAX_THRESHOLD_ENTRIES = 50
+
+#: Cap on the length of `source_attribute`. Attribute keys in HA are
+#: usually short identifiers (`brightness`, `temperature`, `azimuth`);
+#: 255 chars is a hard upper bound that rejects accidental paste of
+#: huge strings without constraining real use.
+_MAX_SOURCE_ATTRIBUTE_LENGTH = 255
+
+
 def _mapping_dict(mapping: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Validate a mapping dict — keys are strings, values are decorations."""
+    """Validate a mapping dict — string keys, decoration values, bounded
+    size. Reject non-string keys rather than silently coercing via
+    `str()` — YAML's `1:` accidentally meaning `"1"` is the kind of
+    surprise users won't notice until the rule doesn't fire."""
     if not isinstance(mapping, dict):
         raise vol.Invalid("mapping must be an object")
-    return {str(k): DECORATION_SCHEMA(v) for k, v in mapping.items()}
+    if len(mapping) > _MAX_MAPPING_ENTRIES:
+        raise vol.Invalid(
+            f"mapping has {len(mapping)} entries; "
+            f"max is {_MAX_MAPPING_ENTRIES}"
+        )
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in mapping.items():
+        if not isinstance(k, str):
+            raise vol.Invalid(
+                f"mapping keys must be strings, got {type(k).__name__} "
+                f"for key {k!r} — quote it as a string"
+            )
+        out[k] = DECORATION_SCHEMA(v)
+    return out
+
+
+def _thresholds_list(thresholds: Any) -> list[dict[str, Any]]:
+    """Validate a thresholds list — bounded size, each entry validated
+    by `_threshold_entry`."""
+    if not isinstance(thresholds, list):
+        raise vol.Invalid("thresholds must be a list")
+    if len(thresholds) > _MAX_THRESHOLD_ENTRIES:
+        raise vol.Invalid(
+            f"thresholds has {len(thresholds)} entries; "
+            f"max is {_MAX_THRESHOLD_ENTRIES}"
+        )
+    return [_threshold_entry(e) for e in thresholds]
+
+
+def _source_attribute(v: Any) -> str | None:
+    """Validate a source_attribute value — None, empty (treated as None),
+    or a bounded-length string. Length cap is upper bound only; real
+    attribute keys are short identifiers."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise vol.Invalid("source_attribute must be a string or null")
+    if len(v) > _MAX_SOURCE_ATTRIBUTE_LENGTH:
+        raise vol.Invalid(
+            f"source_attribute exceeds max length "
+            f"({len(v)} > {_MAX_SOURCE_ATTRIBUTE_LENGTH})"
+        )
+    return v
 
 
 def _target_string(v: Any) -> str:
@@ -132,9 +194,9 @@ _RULE_BASE_SCHEMA = vol.Schema(
         # instead of `state.state` as the value fed to the evaluator. Lets
         # rules drive off numeric attributes like `sun.sun.azimuth` or
         # `weather.home.temperature` rather than the entity's main state.
-        vol.Optional("source_attribute"): vol.Any(str, None),
+        vol.Optional("source_attribute"): _source_attribute,
         vol.Required("mode"): vol.In(VALID_MODES),
-        vol.Optional("thresholds"): [_threshold_entry],
+        vol.Optional("thresholds"): _thresholds_list,
         vol.Optional("mapping"): _mapping_dict,
         vol.Optional("enabled", default=True): bool,
         vol.Optional("priority", default=10): int,

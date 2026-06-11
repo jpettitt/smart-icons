@@ -26,7 +26,20 @@
 
 import type { HassConnection } from './types';
 
-type Listener = (entityId: string, newState: string | undefined) => void;
+/** Listener signature: receives the changed entity's id, the new
+ *  state value (undefined if the entity was removed from the state
+ *  machine), and BOTH the old and new attribute bags so callers can
+ *  detect transitions on specific keys (e.g. "did the smart-icons
+ *  decoration just appear / disappear here?"). Either bag is
+ *  undefined when there's no corresponding state (entity newly
+ *  appeared → oldAttributes undefined; entity removed → newAttributes
+ *  undefined). */
+type Listener = (
+  entityId: string,
+  newState: string | undefined,
+  oldAttributes: Record<string, unknown> | undefined,
+  newAttributes: Record<string, unknown> | undefined,
+) => void;
 
 interface StateSnapshot {
   state: string;
@@ -134,6 +147,11 @@ export class StateWatcher {
   private handleStateChanged(event: StateChangedEvent): void {
     const id = event.data.entity_id;
     const ns = event.data.new_state;
+    // Snapshot the old attributes before we mutate the cache — listeners
+    // diff old vs new to decide whether to react (e.g. the painter only
+    // repaints when smart-icons-specific keys cross the boundary, not on
+    // every unrelated state_changed event).
+    const oldAttrs = this.states.get(id)?.attributes;
     if (ns == null) {
       this.states.delete(id);
     } else {
@@ -142,6 +160,7 @@ export class StateWatcher {
         attributes: ns.attributes ?? {},
       });
     }
-    for (const cb of this.listeners) cb(id, ns?.state);
+    const newAttrs = ns ? (ns.attributes ?? {}) : undefined;
+    for (const cb of this.listeners) cb(id, ns?.state, oldAttrs, newAttrs);
   }
 }

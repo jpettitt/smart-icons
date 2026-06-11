@@ -190,14 +190,22 @@ export function mergeDecorations(
   });
 
   const merged: Partial<Record<DecorationField, string | null>> = {};
+  // Track claimed-field count with a counter instead of repeatedly
+  // calling `Object.keys(merged).length` (which allocates a fresh
+  // array on every check) — mirrors the Python `len()`-based check
+  // for consistency and removes an allocation from the loop body.
+  let claimed = 0;
   for (const { dec } of indexed) {
     for (const field of DECORATION_FIELDS) {
       if (field in merged) continue;
-      if (field in dec) merged[field] = dec[field] ?? null;
+      if (field in dec) {
+        merged[field] = dec[field] ?? null;
+        claimed++;
+      }
     }
-    if (Object.keys(merged).length === DECORATION_FIELDS.length) break;
+    if (claimed === DECORATION_FIELDS.length) break;
   }
-  if (Object.keys(merged).length === 0) return null;
+  if (claimed === 0) return null;
   return {
     color: merged.color ?? null,
     icon: merged.icon ?? null,
