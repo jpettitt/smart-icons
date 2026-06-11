@@ -13,11 +13,11 @@ export default {
       // import time. The plugin's `tsconfig` option is a path; it
       // reads the file and forwards the raw contents to esbuild.
       tsconfig: './tsconfig.json',
-      // Match the production build's --define so __BUILD_TIME__
+      // Match the production build's --define so __BUILD_VERSION__
       // exists at test time too (the panel entry references it
       // unconditionally; without this the runner would throw
       // ReferenceError when the entry is imported).
-      define: { __BUILD_TIME__: '"test"' },
+      define: { __BUILD_VERSION__: '"test"' },
     }),
   ],
   nodeResolve: true,
