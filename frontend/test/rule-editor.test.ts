@@ -187,3 +187,152 @@ describe('rule-editor: modeError catches incomplete entries', () => {
     expect(priv(el).modeError).to.be.null;
   });
 });
+
+describe('rule-editor: serialize source defaults align with backend', () => {
+  // Backend `validate_rule` defaults source to target ONLY when there's
+  // exactly one literal target AND no glob characters in it. Any other
+  // case (multi-target, glob present, or both) → source stays empty,
+  // meaning per-target evaluation. Frontend must match: serializing
+  // with source-blank shouldn't pick the first literal entity as the
+  // source when globs are also present.
+  it('pure single-literal target with no source defaults source to the target', async () => {
+    const el = await makeEditor(
+      baseRule({
+        targets: ['light.kitchen'],
+        source: '',  // user left source blank
+        mode: 'mapping',
+        mapping: { on: { color: '#fff' } },
+      }),
+    );
+    const out = priv(el).serialize();
+    expect(out.source).to.equal('light.kitchen');
+  });
+
+  it('mixed literal + glob targets with no source leaves source empty (per-target)', async () => {
+    // This was the bug: serialize() unconditionally fell back to
+    // entities[0] when sourceTrimmed was empty, producing an explicit
+    // source for a rule the user clearly authored as multi-target.
+    // Backend would then evaluate ALL resolved targets against the one
+    // literal's state — almost never the intent.
+    const el = await makeEditor(
+      baseRule({
+        targets: ['light.kitchen'],
+        source: '',
+        mode: 'mapping',
+        mapping: { on: { color: '#fff' } },
+      }),
+    );
+    // Add a glob via the working state (no public API on the editor
+    // for this, so we poke private state — same pattern as the
+    // mapping/threshold tests above).
+    priv(el).working.targetGlobs.push({ value: 'sensor.*', _key: 1 });
+    const out = priv(el).serialize();
+    expect(out.source).to.equal('');
+    expect(out.targets).to.eql(['light.kitchen', 'sensor.*']);
+  });
+
+  it('glob-only targets with no source leaves source empty', async () => {
+    // No literal entities at all — entities[0] is undefined; was
+    // already correct via the `|| ''` chain. Locked in as a
+    // regression test.
+    const el = await makeEditor(
+      baseRule({
+        targets: ['sensor.*'],
+        source: '',
+        mode: 'mapping',
+        mapping: { unknown: { color: '#f00' } },
+      }),
+    );
+    const out = priv(el).serialize();
+    expect(out.source).to.equal('');
+  });
+
+  it('explicit source is respected regardless of target shape', async () => {
+    const el = await makeEditor(
+      baseRule({
+        targets: ['light.kitchen', 'light.bedroom'],
+        source: 'input_select.scene',
+        mode: 'mapping',
+        mapping: { movie: { color: '#000' } },
+      }),
+    );
+    expect(priv(el).modeError).to.be.null;
+  });
+});
+
+/** Dirty-tracking is what gates the panel-level "Discard changes?"
+ *  confirm: the panel listens for `dirty-changed` events to toggle
+ *  the document-capture pointerdown / keydown guards that intercept
+ *  backdrop-click and ESC dismissal of the ha-dialog wrapping this
+ *  editor. If isDirty() ever lies, the user loses unsaved edits to
+ *  a stray click — the whole point of the feature. */
+describe('rule-editor: dirty tracking', () => {
+  type EditorWithDirty = SmartIconsRuleEditor & {
+    isDirty(): boolean;
+    working: { source: string };
+  };
+
+  it('reports clean on a freshly hydrated rule', async () => {
+    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    expect(el.isDirty()).to.be.false;
+  });
+
+  it('flips dirty after a working-state change', async () => {
+    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    expect(el.isDirty()).to.be.false;
+    el.working = { ...el.working, source: 'sensor.changed' };
+    await el.updateComplete;
+    expect(el.isDirty()).to.be.true;
+  });
+
+  it('re-hydrating resets the snapshot to the new rule', async () => {
+    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    el.working = { ...el.working, source: 'sensor.changed' };
+    await el.updateComplete;
+    expect(el.isDirty()).to.be.true;
+    // Swap rule → editor re-hydrates and resnapshots. Without this
+    // reset, the next dialog open would inherit the prior session's
+    // dirty flag and falsely block dismissal.
+    el.rule = baseRule({ id: '02', source: 'sensor.b' });
+    await el.updateComplete;
+    expect(el.isDirty()).to.be.false;
+  });
+
+  it('fires dirty-changed with the new value once per transition', async () => {
+    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    const events: boolean[] = [];
+    el.addEventListener('dirty-changed', (e) => {
+      events.push((e as CustomEvent<{ dirty: boolean }>).detail.dirty);
+    });
+    // First edit: clean → dirty.
+    el.working = { ...el.working, source: 'sensor.a' };
+    await el.updateComplete;
+    // Second edit while already dirty: should NOT fire again — the
+    // panel-side guard only cares about transitions.
+    el.working = { ...el.working, source: 'sensor.b' };
+    await el.updateComplete;
+    // Revert to initial snapshot: dirty → clean.
+    el.working = { ...el.working, source: 'sensor.state' };
+    await el.updateComplete;
+    expect(events).to.deep.equal([true, false]);
+  });
+
+  it('cancel-button event carries the current dirty state', async () => {
+    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    let detail: { dirty: boolean } | undefined;
+    el.addEventListener('cancel-button', (e) => {
+      detail = (e as CustomEvent<{ dirty: boolean }>).detail;
+    });
+    // Clean cancel.
+    const cancelClean = (
+      el as unknown as { cancelClicked: () => void }
+    ).cancelClicked;
+    cancelClean.call(el);
+    expect(detail?.dirty).to.be.false;
+    // Dirty cancel.
+    el.working = { ...el.working, source: 'sensor.changed' };
+    await el.updateComplete;
+    cancelClean.call(el);
+    expect(detail?.dirty).to.be.true;
+  });
+});

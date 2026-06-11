@@ -120,16 +120,19 @@ export const panelStyles = css`
     cursor: not-allowed;
   }
   /* ha-code-editor sizing for the panel's whole-config code view.
-     The element internally hosts a CodeMirror 6 surface; we just
-     constrain its outer block to the same min/max height the prior
-     bare textarea had so the layout stays familiar. ha-code-editor
-     paints its own border, focus ring, and font, so the rest of the
-     v0.3.0a2 textarea styling is gone. */
+     ha-code-editor's internal .cm-editor is height:100%!important /
+     max-height:100%!important — setting max-height on the host
+     alone doesn't constrain it (the percentage can't resolve against
+     an auto-height parent), so the editor grows to fit content and
+     pushes the .panel-actions row off-screen. HA's own pages avoid
+     this by setting --code-mirror-max-height, which the element
+     consumes internally on its scroller. We follow the same pattern.
+     The host stays display: block so the actions row sits below it. */
   .yaml-area {
     display: block;
     width: 100%;
     min-height: 420px;
-    max-height: 70vh;
+    --code-mirror-max-height: 70vh;
     box-sizing: border-box;
   }
   /* Inline error block below the YAML textarea (parse failures,
@@ -875,13 +878,15 @@ export const editorStyles = css`
     outline-offset: 1px;
   }
   /* ha-code-editor sizing for the editor's per-rule code-editor
-     mode. Matches the panel's whole-config view in styles.ts; the
-     element handles its own border/font/focus styling internally. */
+     mode. Same gotcha as the panel's whole-config view: the host's
+     own max-height doesn't constrain CodeMirror; use
+     --code-mirror-max-height so the editor scrolls internally and
+     the dialog's Save/Cancel row stays visible below it. */
   .yaml-area {
     display: block;
     width: 100%;
     min-height: 320px;
-    max-height: 60vh;
+    --code-mirror-max-height: 60vh;
     box-sizing: border-box;
   }
   .error {
