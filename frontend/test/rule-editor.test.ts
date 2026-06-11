@@ -267,18 +267,29 @@ describe('rule-editor: serialize source defaults align with backend', () => {
  *  editor. If isDirty() ever lies, the user loses unsaved edits to
  *  a stray click — the whole point of the feature. */
 describe('rule-editor: dirty tracking', () => {
-  type EditorWithDirty = SmartIconsRuleEditor & {
+  /** SmartIconsRuleEditor's reactive fields are `private`. A naive
+   *  `Editor & { working: ... }` intersection collapses to `never`
+   *  in strict TS because `private` members can't be widened
+   *  through an intersection. Cast through `unknown` (same pattern
+   *  the file-level `priv()` helper uses) to poke at internals. */
+  type DirtyEditorPriv = {
     isDirty(): boolean;
     working: { source: string };
+    cancelClicked: () => void;
+    updateComplete: Promise<unknown>;
+    rule?: Rule;
+    addEventListener: HTMLElement['addEventListener'];
   };
+  const priv = (el: SmartIconsRuleEditor): DirtyEditorPriv =>
+    el as unknown as DirtyEditorPriv;
 
   it('reports clean on a freshly hydrated rule', async () => {
-    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    const el = priv(await makeEditor(baseRule()));
     expect(el.isDirty()).to.be.false;
   });
 
   it('flips dirty after a working-state change', async () => {
-    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    const el = priv(await makeEditor(baseRule()));
     expect(el.isDirty()).to.be.false;
     el.working = { ...el.working, source: 'sensor.changed' };
     await el.updateComplete;
@@ -286,7 +297,7 @@ describe('rule-editor: dirty tracking', () => {
   });
 
   it('re-hydrating resets the snapshot to the new rule', async () => {
-    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    const el = priv(await makeEditor(baseRule()));
     el.working = { ...el.working, source: 'sensor.changed' };
     await el.updateComplete;
     expect(el.isDirty()).to.be.true;
@@ -299,9 +310,9 @@ describe('rule-editor: dirty tracking', () => {
   });
 
   it('fires dirty-changed with the new value once per transition', async () => {
-    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    const el = priv(await makeEditor(baseRule()));
     const events: boolean[] = [];
-    el.addEventListener('dirty-changed', (e) => {
+    el.addEventListener('dirty-changed', (e: Event) => {
       events.push((e as CustomEvent<{ dirty: boolean }>).detail.dirty);
     });
     // First edit: clean → dirty.
@@ -318,21 +329,18 @@ describe('rule-editor: dirty tracking', () => {
   });
 
   it('cancel-button event carries the current dirty state', async () => {
-    const el = (await makeEditor(baseRule())) as EditorWithDirty;
+    const el = priv(await makeEditor(baseRule()));
     let detail: { dirty: boolean } | undefined;
-    el.addEventListener('cancel-button', (e) => {
+    el.addEventListener('cancel-button', (e: Event) => {
       detail = (e as CustomEvent<{ dirty: boolean }>).detail;
     });
     // Clean cancel.
-    const cancelClean = (
-      el as unknown as { cancelClicked: () => void }
-    ).cancelClicked;
-    cancelClean.call(el);
+    el.cancelClicked();
     expect(detail?.dirty).to.be.false;
     // Dirty cancel.
     el.working = { ...el.working, source: 'sensor.changed' };
     await el.updateComplete;
-    cancelClean.call(el);
+    el.cancelClicked();
     expect(detail?.dirty).to.be.true;
   });
 });
