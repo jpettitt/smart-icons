@@ -72,9 +72,11 @@ export class RuleStore {
     return [...this.rules.values()];
   }
 
+  /** Rules whose literal `targets` include the given entity id. Glob
+   *  entries are not expanded — glob resolution lives in the panel /
+   *  painter layers where `hass.states` is available. Utility method
+   *  for future consumers; the current paint path doesn't use it. */
   byTarget(entityId: string): Rule[] {
-    // Literal-match only; glob expansion would require live state and
-    // belongs in the painter / panel layer, not here.
     const out: Rule[] = [];
     for (const r of this.rules.values()) {
       if (r.targets.includes(entityId)) out.push(r);
@@ -82,11 +84,14 @@ export class RuleStore {
     return out;
   }
 
-  /** Unique set of source entities referenced by enabled rules. */
+  /** Unique non-empty source entities referenced by enabled rules.
+   *  Empty source (per-target evaluation) is intentionally filtered —
+   *  callers iterating this set are looking for actual entity ids
+   *  driving rules, not the per-target sentinel. */
   sources(): Set<string> {
     const out = new Set<string>();
     for (const r of this.rules.values()) {
-      if (r.enabled) out.add(r.source);
+      if (r.enabled && r.source) out.add(r.source);
     }
     return out;
   }

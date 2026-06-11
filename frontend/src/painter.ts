@@ -265,6 +265,60 @@ export class Painter {
       for (const n of r.addedNodes) {
         if (n instanceof Element) this.scanForIconsAndShadows(n);
       }
+      // Process removals: walk the removed subtree and drop any
+      // `ha-state-icon` host we know about from `knownHosts`.
+      // Without this, hosts only get pruned during `repaintAll()`'s
+      // `host.isConnected` sweep — which is fine when state changes
+      // happen on a typical dashboard, but on a quiet dashboard with
+      // many view-switches the Set accumulates dead references.
+      // Bounded in practice; cheap to do correctly.
+      for (const n of r.removedNodes) {
+        if (n instanceof Element) this.dropRemovedHosts(n);
+      }
+    }
+  }
+
+  /** Walk the removed subtree (descending into any shadow roots) and
+   *  ditch any `ha-state-icon` host from `knownHosts`. Cheap
+   *  O(removed subtree) per mutation batch. Shadow-pierce matters
+   *  because most ha-state-icons in Lovelace live inside card shadow
+   *  roots; without the recursive descent we'd miss them when the
+   *  parent card is removed (their isConnected becomes false and
+   *  repaintAll's sweep would catch them eventually, but earlier
+   *  cleanup keeps the Set tighter on quiet dashboards). */
+  private dropRemovedHosts(root: Element): void {
+    if (root.tagName === 'HA-STATE-ICON') {
+      this.knownHosts.delete(root as IconHostWithStateObj);
+    }
+    // Light-DOM descendants.
+    const icons = root.querySelectorAll?.('ha-state-icon');
+    if (icons) {
+      for (const el of icons) {
+        this.knownHosts.delete(el as IconHostWithStateObj);
+      }
+    }
+    // Shadow-DOM descendants — querySelectorAll doesn't pierce. Walk
+    // the shadow root of the removed element AND of every nested
+    // custom element under it that has its own shadow.
+    const ownShadow = (root as Element & { shadowRoot?: ShadowRoot }).shadowRoot;
+    if (ownShadow) {
+      const shadowIcons = ownShadow.querySelectorAll('ha-state-icon');
+      for (const el of shadowIcons) {
+        this.knownHosts.delete(el as IconHostWithStateObj);
+      }
+      const shadowCustoms = ownShadow.querySelectorAll('*');
+      for (const el of shadowCustoms) {
+        const sr = (el as Element & { shadowRoot?: ShadowRoot }).shadowRoot;
+        if (sr) this.dropRemovedHosts(el);
+      }
+    }
+    // Light-DOM custom elements that themselves have shadow roots.
+    const customs = root.querySelectorAll?.('*');
+    if (customs) {
+      for (const el of customs) {
+        const sr = (el as Element & { shadowRoot?: ShadowRoot }).shadowRoot;
+        if (sr) this.dropRemovedHosts(el);
+      }
     }
   }
 

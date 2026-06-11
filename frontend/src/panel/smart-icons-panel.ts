@@ -107,6 +107,16 @@ export class SmartIconsPanel extends LitElement {
   // edits. Renders a confirmation modal; the actual toggle only
   // fires after the user clicks Discard.
   @state() private pendingDiscard = false;
+  // Reflects the rule-editor's `dirty-changed` event. Drives
+  // ha-dialog's `scrimClickAction` / `escapeKeyAction` so clicking
+  // off the dialog (or pressing ESC) mid-edit doesn't silently
+  // dismiss unsaved work. Also flips the Cancel button into a
+  // "Discard changes?" confirm flow.
+  @state() private editorDirty = false;
+  // Set when the user clicks Cancel on a dirty rule editor —
+  // renders a small confirm modal on top so they can either
+  // resume editing or commit to throwing the edits away.
+  @state() private pendingEditDiscard = false;
 
   private store?: RuleStore;
   private unsubscribe?: () => void;
@@ -120,6 +130,20 @@ export class SmartIconsPanel extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     void this.initStore();
+    // Document-capture guards for the rule-editor dialog. Modern
+    // ha-dialog wraps a native <dialog>; HA's own
+    // `handleDialogPointerDown` fires on `pointerdown` (not click)
+    // and calls `requestClose(this.dialog)` when the target is the
+    // dialog element itself — i.e. the backdrop. Verified by
+    // grepping hass_frontend for `handleDialogPointerDown`. We
+    // intercept the same pointerdown at document capture phase so
+    // we run *before* HA's bubble-phase listener,
+    // stopImmediatePropagation to abort the close, and open the
+    // Discard confirm. Guards bail out unless (a) the rule-editor
+    // dialog is open, (b) the editor is dirty, and (c) the discard
+    // confirm isn't already showing.
+    document.addEventListener('pointerdown', this.guardBackdropClick, true);
+    document.addEventListener('keydown', this.guardEscape, true);
     // ha-code-editor is HA's CodeMirror chunk — lazy-loaded the first
     // time anything imports it. If our panel mounts before any HA
     // surface (automation editor, blueprint inspector, etc.) has
@@ -138,9 +162,49 @@ export class SmartIconsPanel extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    document.removeEventListener('pointerdown', this.guardBackdropClick, true);
+    document.removeEventListener('keydown', this.guardEscape, true);
     this.unsubscribe?.();
     void this.store?.disconnect();
   }
+
+  /** True when our dirty-edit guards should run. The discard confirm
+   *  is itself an ha-dialog and shouldn't be re-guarded — clicking
+   *  off it (or pressing ESC inside it) should resume editing
+   *  cleanly, which means letting HA's close handler proceed. */
+  private get guardsActive(): boolean {
+    return this.dialogOpen && this.editorDirty && !this.pendingEditDiscard;
+  }
+
+  /** Capture-phase backdrop pointerdown guard. Native <dialog>
+   *  reports the dialog element itself as the event target when
+   *  the pointer lands on `::backdrop`. Shadow-DOM retargeting at
+   *  the document level rewrites `e.target` to HA's root
+   *  `<home-assistant>` host, so we use `e.composedPath()[0]` to
+   *  see the actual innermost element, which is `<dialog>` for a
+   *  backdrop hit. HA's own backdrop-close runs in the bubble
+   *  phase of the same pointerdown event, so capture phase here
+   *  gets us in front of it. */
+  private guardBackdropClick = (e: PointerEvent): void => {
+    if (!this.guardsActive) return;
+    const path = e.composedPath();
+    const innermost = path[0] as HTMLElement | undefined;
+    if (!innermost || innermost.localName !== 'dialog') return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    this.pendingEditDiscard = true;
+  };
+
+  /** Capture-phase ESC guard. HA's dialog code intercepts ESC and
+   *  calls `close()` programmatically (which skips the native
+   *  `cancel` event), so @cancel on ha-dialog can't catch it. */
+  private guardEscape = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape') return;
+    if (!this.guardsActive) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    this.pendingEditDiscard = true;
+  };
 
   override render() {
     return html`
@@ -171,6 +235,7 @@ export class SmartIconsPanel extends LitElement {
       ${this.dialogOpen ? this.renderDialog() : nothing}
       ${this.pendingDelete ? this.renderDeleteConfirm() : nothing}
       ${this.pendingDiscard ? this.renderDiscardConfirm() : nothing}
+      ${this.pendingEditDiscard ? this.renderEditDiscardConfirm() : nothing}
     `;
   }
 
@@ -538,19 +603,32 @@ export class SmartIconsPanel extends LitElement {
   }
 
   private renderDialog() {
+    // Modern ha-dialog wraps a native <dialog> (scrim is the
+    // ::backdrop pseudo, not a DOM node). The mwc-dialog intercept
+    // points (@closing, scrimClickAction) don't fire on this surface.
+    // ESC + closedby light-dismiss come through @cancel; the
+    // backdrop-click intercept is wired separately at the document
+    // capture phase (see addDialogGuards) — Lit's @click binds in
+    // the bubble phase, which runs AFTER HA's internal close
+    // handler and so can't stop the close from happening.
+    // The editor's own Cancel button routes through @cancel-button
+    // (a separately-named CustomEvent on the rule-editor) to avoid
+    // colliding with the dialog's native cancel.
     return html`
       <ha-dialog
         open
         heading=${this.dialogTitle}
         style="--dialog-content-padding: 0"
-        @closed=${this.cancelEdit}
+        @cancel=${this.onDialogCancel}
+        @closed=${this.onDialogClosed}
       >
         <smart-icons-rule-editor
           .hass=${this.hass}
           .rule=${this.editing ?? undefined}
           .errorMessage=${this.editorError}
           @save=${this.onEditorSave}
-          @cancel=${this.cancelEdit}
+          @cancel-button=${this.onEditorCancel}
+          @dirty-changed=${this.onEditorDirtyChanged}
         ></smart-icons-rule-editor>
       </ha-dialog>
     `;
@@ -612,11 +690,92 @@ export class SmartIconsPanel extends LitElement {
     this.dialogOpen = true;
   }
 
+  /** Shared cleanup for "the dialog is closing for good" — runs after
+   *  Save success, after the user confirms a discard, or after a
+   *  scrim/ESC close on a clean editor. Resets every editing-related
+   *  bit of state. */
   private cancelEdit = (): void => {
     this.dialogOpen = false;
     this.editing = null;
     this.editorError = '';
+    this.editorDirty = false;
+    this.pendingEditDiscard = false;
   };
+
+  /** Native <dialog> @cancel handler. Fires on ESC press and
+   *  (Chrome 130+ closedby) light-dismiss backdrop click — both
+   *  cancelable via preventDefault. On a dirty editor we abort
+   *  the close and surface the Discard confirm. */
+  private onDialogCancel = (e: Event): void => {
+    if (!this.editorDirty) return;
+    e.preventDefault();
+    this.pendingEditDiscard = true;
+  };
+
+  /** ha-dialog @closed handler. Cleanups for the clean-close path
+   *  (scrim/ESC on a non-dirty editor, or after a confirmed
+   *  Discard). cancelEdit resets editorDirty too so the next
+   *  open isn't pre-blocked. */
+  private onDialogClosed = (): void => {
+    this.cancelEdit();
+  };
+
+  /** Editor Cancel button. Routes through the dirty-check: if the
+   *  user has unsaved edits, surface the discard confirm instead of
+   *  silently throwing the work away. */
+  private onEditorCancel = (e: CustomEvent<{ dirty: boolean }>): void => {
+    if (e.detail?.dirty) {
+      this.pendingEditDiscard = true;
+      return;
+    }
+    this.cancelEdit();
+  };
+
+  /** Tracks the editor's dirty state. Drives the document-capture
+   *  guards (guardBackdropClick, guardEscape) so the user can't
+   *  lose work to a stray click off the card or ESC press. */
+  private onEditorDirtyChanged = (e: CustomEvent<{ dirty: boolean }>): void => {
+    this.editorDirty = !!e.detail?.dirty;
+  };
+
+  /** Keep-editing — dismiss the confirm, leave the editor dialog
+   *  intact. The rule-editor's internal `working` state is still
+   *  resident because the dialog never closed. */
+  private resumeEditing = (): void => {
+    this.pendingEditDiscard = false;
+  };
+
+  /** Discard confirmed — proceed with the close that the dirty
+   *  flag was blocking. cancelEdit clears editorDirty too so the
+   *  next dialog opens with scrim/ESC re-enabled. */
+  private confirmEditDiscard = (): void => {
+    this.cancelEdit();
+  };
+
+  private renderEditDiscardConfirm() {
+    return html`
+      <ha-dialog
+        open
+        heading="Discard changes?"
+        @closed=${this.resumeEditing}
+      >
+        <p>
+          You have unsaved changes in this rule. Closing the editor
+          will throw them away.
+        </p>
+        <!-- See note on the panel-level discard confirm: ha-dialog's
+             primaryAction / secondaryAction named slots aren't
+             available in modern HA, so the action row lives in the
+             content area. -->
+        <div class="dialog-actions">
+          <ha-button @click=${this.resumeEditing}>Keep editing</ha-button>
+          <ha-button variant="danger" @click=${this.confirmEditDiscard}
+            >Discard</ha-button
+          >
+        </div>
+      </ha-dialog>
+    `;
+  }
 
   private onEditorSave = async (e: CustomEvent<Partial<Rule>>): Promise<void> => {
     const payload = e.detail;
@@ -626,6 +785,10 @@ export class SmartIconsPanel extends LitElement {
         type: 'smart_icons/upsert',
         rule: payload,
       });
+      // Clear editorDirty before dialogOpen=false so onDialogClosing
+      // doesn't intercept the successful-save close path and pop up
+      // the Discard confirm. Same goes for editing=null.
+      this.editorDirty = false;
       this.dialogOpen = false;
       this.editing = null;
     } catch (err) {

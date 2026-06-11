@@ -93,6 +93,17 @@ export class SmartIconsRuleEditor extends LitElement {
   private _observedStatesCache = new Map<string, readonly string[]>();
   private _observedStatesEntityId = '';
 
+  /** JSON snapshot of (working + codeMode + codeText) taken right after
+   *  hydrate. Drives `isDirty()` and the `dirty-changed` event the
+   *  panel uses to gate ha-dialog's scrim-click auto-close. Set in
+   *  willUpdate when the `rule` property changes; kept stable across
+   *  all subsequent edits until the next rule swap. */
+  private initialSnapshot = '';
+  /** Last dirty value we fired `dirty-changed` for. Prevents firing on
+   *  every keystroke when the answer hasn't actually changed (dirty
+   *  flipped clean → dirty once, not once per character). */
+  private lastDirtyEmitted = false;
+
   override connectedCallback(): void {
     super.connectedCallback();
     // HA's element chunks are lazy-loaded; re-render when each lands so
@@ -132,6 +143,14 @@ export class SmartIconsRuleEditor extends LitElement {
   override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has('rule')) {
       this.working = this.rule ? this.hydrate(this.rule) : this.blankState();
+      // Re-snapshot for dirty detection. Capture the post-hydrate
+      // state so an unedited fresh-open reports dirty=false even
+      // though the rule swap technically changed the working state.
+      this.codeMode = false;
+      this.codeText = '';
+      this.codeError = '';
+      this.initialSnapshot = this.snapshotKey();
+      this.lastDirtyEmitted = false;
     }
     // Keep the observed-states datalist in sync with whichever entity
     // is currently driving evaluation. For explicit-source rules
@@ -143,6 +162,26 @@ export class SmartIconsRuleEditor extends LitElement {
       this._observedStatesEntityId = effectiveSource;
       void this.refreshObservedStates(effectiveSource);
     }
+  }
+
+  /** After every render-causing change, fire `dirty-changed` if the
+   *  dirty status flipped. The host panel listens and toggles
+   *  ha-dialog's `scrimClickAction` / `escapeKeyAction` to gate
+   *  accidental click-outside dismissal mid-edit. Skip when the
+   *  initial snapshot hasn't been taken yet (first render before
+   *  rule property lands). */
+  override updated(_changed: Map<string, unknown>): void {
+    if (!this.initialSnapshot) return;
+    const dirty = this.isDirty();
+    if (dirty === this.lastDirtyEmitted) return;
+    this.lastDirtyEmitted = dirty;
+    this.dispatchEvent(
+      new CustomEvent('dirty-changed', {
+        detail: { dirty },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
   /** Entity id we'll query for the mapping-key autocomplete. Empty
@@ -562,10 +601,43 @@ export class SmartIconsRuleEditor extends LitElement {
   }
 
   private cancelClicked = (): void => {
+    // Named `cancel-button` (not `cancel`) so it doesn't collide
+    // with the native <dialog>'s `cancel` event when this editor
+    // is hosted inside an ha-dialog. The panel listens for both
+    // separately — ESC fires the dialog's cancel, button click
+    // fires this.
     this.dispatchEvent(
-      new CustomEvent('cancel', { bubbles: true, composed: true })
+      new CustomEvent('cancel-button', {
+        detail: { dirty: this.isDirty() },
+        bubbles: true,
+        composed: true,
+      })
     );
   };
+
+  /** JSON key over the user-editable surface. Used both for the
+   *  initial snapshot and for `isDirty()` comparisons. Includes
+   *  codeMode + codeText because the YAML view is a real edit
+   *  surface — half-written YAML is just as much lost work as
+   *  half-filled form fields. */
+  private snapshotKey(): string {
+    return JSON.stringify({
+      working: this.working,
+      codeMode: this.codeMode,
+      codeText: this.codeText,
+    });
+  }
+
+  /** True when the user has made any change since the dialog opened.
+   *  Public so the host panel can read it on close attempts (the
+   *  ha-dialog scrim/ESC gate reads this via a ref instead of
+   *  threading dirty state through a `dirty-changed` event). */
+  public isDirty(): boolean {
+    return (
+      this.initialSnapshot !== '' &&
+      this.snapshotKey() !== this.initialSnapshot
+    );
+  }
 
   /** Called by the host panel from the dialog's action-slot Save
    *  button. Fires the `save` event with the serialized payload only
@@ -1149,15 +1221,22 @@ export class SmartIconsRuleEditor extends LitElement {
   }
 
   /** Tiny glob matcher matching Python's fnmatch: `*` (any), `?` (one),
-   *  `[set]` (one of). Mirrors the backend's `_resolve_targets` so the
-   *  preview matches what the injector actually applies. */
+   *  `[set]` (one of), `[!set]` (none of). Mirrors the backend's
+   *  `_resolve_targets` so the preview matches what the injector
+   *  actually applies. JavaScript regex character-class syntax uses
+   *  `^` for negation where fnmatch uses `!`, so translate that
+   *  before letting the resulting char-class fall through unescaped.
+   *  Note: square brackets are NOT in the escape list above precisely
+   *  so positive `[abc]` sets pass through as valid regex char
+   *  classes; only the `[!` → `[^` translation is needed for parity. */
   private matchGlob(pattern: string): string[] {
     const re = new RegExp(
       '^' +
         pattern
           .replace(/[.+^$()|\\]/g, '\\$&')
           .replace(/\*/g, '.*')
-          .replace(/\?/g, '.') +
+          .replace(/\?/g, '.')
+          .replace(/\[!/g, '[^') +
         '$'
     );
     return Object.keys(this.hass?.states ?? {})
@@ -1362,7 +1441,17 @@ export class SmartIconsRuleEditor extends LitElement {
       .filter((v) => v.length > 0);
     const targets = [...entities, ...globs];
     const sourceTrimmed = this.working.source.trim();
-    const source = sourceTrimmed || entities[0] || '';
+    // Match backend `validate_rule`'s default-source semantics:
+    // ONLY a pure single-literal target with no globs gets its source
+    // auto-defaulted to the target. Any mixed-target or multi-target
+    // shape leaves the source empty, which the injector reads as
+    // per-target evaluation. Previously this fell back to
+    // `entities[0]` unconditionally, which produced an explicit
+    // single-source rule for users who clearly authored a multi-
+    // target rule and left the source blank intentionally.
+    const isPureSingleLiteral = entities.length === 1 && globs.length === 0;
+    const source =
+      sourceTrimmed || (isPureSingleLiteral ? entities[0] : '');
     const sourceAttribute = this.working.source_attribute.trim();
     const base: Partial<Rule> = {
       targets,

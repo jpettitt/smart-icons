@@ -226,6 +226,71 @@ async def test_version(hass, hass_ws_client, config_entry):  # noqa: ARG001
     assert resp["result"]["schema_version"] == 1
 
 
+def test_integration_version_matches_manifest():
+    """INTEGRATION_VERSION is now read from manifest.json at import time —
+    locks in that they don't drift. Guards against the historical
+    duplicate-string bug where a release bumped manifest.json but
+    missed a hardcoded copy in websocket_api.py."""
+    import json
+    from pathlib import Path
+
+    manifest = json.loads(
+        Path("custom_components/smart_icons/manifest.json").read_text()
+    )
+    assert INTEGRATION_VERSION == manifest["version"]
+
+
+async def test_replace_all_empty_list_clears_all_rules(
+    hass, hass_ws_client, config_entry  # noqa: ARG001
+):
+    """Replace_all with an empty list removes every rule. Pre-existing
+    rules trigger "removed" subscriber events; the count returned is 0.
+    Audit coverage for the explicit zero-rule case (the atomicity test
+    above never sends an empty list)."""
+    ws = await hass_ws_client(hass)
+    # Seed two rules first.
+    await ws.send_json(
+        {"id": 1, "type": WS_UPSERT, "rule": _mapping_rule_payload()}
+    )
+    await ws.receive_json()
+    await ws.send_json(
+        {
+            "id": 2,
+            "type": WS_UPSERT,
+            "rule": _mapping_rule_payload(target="light.bedroom"),
+        }
+    )
+    await ws.receive_json()
+
+    # Now replace with an empty list.
+    await ws.send_json({"id": 3, "type": WS_REPLACE_ALL, "rules": []})
+    resp = await ws.receive_json()
+    assert resp["success"] is True
+    assert resp["result"]["count"] == 0
+
+    # Confirm via list.
+    await ws.send_json({"id": 4, "type": WS_LIST})
+    resp = await ws.receive_json()
+    assert resp["result"]["rules"] == []
+
+
+async def test_replace_all_rejects_oversized_rules_list(
+    hass, hass_ws_client, config_entry  # noqa: ARG001
+):
+    """Replace_all caps the rules list at 1000 entries — bounds the
+    synchronous validation loop. Cap is admin-gated, so the attack
+    surface is the admin themselves, but bounding is cheap defense-
+    in-depth."""
+    ws = await hass_ws_client(hass)
+    huge_payload = [_mapping_rule_payload() for _ in range(1001)]
+    await ws.send_json(
+        {"id": 1, "type": WS_REPLACE_ALL, "rules": huge_payload}
+    )
+    resp = await ws.receive_json()
+    assert resp["success"] is False
+    assert resp["error"]["code"] == "invalid_format"
+
+
 @pytest.mark.parametrize(
     ("payload", "label"),
     [

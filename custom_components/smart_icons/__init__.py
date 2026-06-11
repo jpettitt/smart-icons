@@ -28,11 +28,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await store.async_load()
 
     injector = IconInjector(hass, store)
-    injector.async_start()
 
+    # Populate hass.data BEFORE injector.async_start() and
+    # async_register_commands() — otherwise a WS client racing setup (or
+    # the injector's own state-applied events firing handlers that walk
+    # hass.data) could see hass.data[DOMAIN] missing the store/injector
+    # entries. HA normally serializes setup before clients connect, but
+    # the ordering needs to be correct regardless of that fortunate
+    # timing.
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][DATA_STORE] = store
     hass.data[DOMAIN][DATA_INJECTOR] = injector
+
+    injector.async_start()
 
     # Idempotent — async_register_command tolerates the second call as long
     # as the same handlers are registered, but a single config entry is

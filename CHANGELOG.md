@@ -1,6 +1,87 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
+## v0.3.1a1 — 2026-06-10
+
+First alpha of the v0.3.1 line. Two threads of work: a code-review
+sweep that tightens the integration's robustness without changing
+user-visible behavior, and two UX fixes for the rule editor that
+came out of dogfooding the v0.3.0 GA.
+
+### What's new
+
+- **Panel YAML view: Save / "Show visual editor" are visible again
+  on long configs.** `ha-code-editor`'s host `max-height` doesn't
+  constrain the internal CodeMirror surface — the editor grew with
+  content and pushed the action row off-screen. Switched to
+  `--code-mirror-max-height` (the CSS variable HA's own
+  automation editor uses), which makes the editor scroll
+  internally and keeps the action row visible. Same fix applied
+  to the per-rule code-mode editor.
+
+- **Rule editor: backdrop click and ESC no longer silently throw
+  away unsaved edits.** The editor now tracks a dirty flag; when
+  the user has unsaved work and clicks off the dialog (or presses
+  ESC), a "Discard changes? [Keep editing] [Discard]" confirm
+  appears. Save success and clean dismissal pass through
+  unchanged. Implementation note: HA's modern `ha-dialog` wraps
+  a native `<dialog>` and binds `pointerdown` (not `click`) for
+  backdrop close, so the guard is a document-capture
+  `pointerdown` listener — bubble-phase listeners on the element
+  are too late.
+
+### Internal hardening (from code-review sweep)
+
+- **Validation size caps**: mapping at 200 entries, thresholds at
+  50, `source_attribute` length at 255, `replace_all` batch at
+  1000. Bounds the synchronous validation/scan loops against
+  pathologically large payloads.
+- **Validation tightening**: empty `thresholds` lists explicitly
+  rejected; non-string mapping keys rejected (YAML's bare `1:`
+  was silently coerced via `str()`, producing rules that didn't
+  fire); non-string `source_attribute` rejected (used to be
+  `vol.Any(str, None)` which accepted weird types via voluptuous
+  coercion).
+- **Setup race fix**: `hass.data[DOMAIN]` and the store/injector
+  pointers are now wired before `injector.async_start()` and WS
+  command registration, so a WS client racing setup can't see a
+  partially-populated `hass.data`.
+- **Injector attr pre-check**: state-update attribute writes only
+  allocate a new dict when at least one of color / icon /
+  background actually changed. Eliminates a per-event allocation
+  for the common no-op case.
+- **Painter memory hygiene**: light-DOM and shadow-DOM
+  `removedNodes` from the MutationObserver now prune
+  `knownHosts` immediately, instead of letting the set grow
+  until the next full sweep. Fixes a slow leak in busy
+  Lovelace dashboards with cards rotating in and out.
+- **State watcher**: `repaintAll()` now only fires when the
+  `smart_icons:` decoration attrs were involved (either present
+  on the old state or present on the new). Filters out the long
+  tail of unrelated entity updates.
+- **Frontend glob matching parity**: `matchGlob` now translates
+  fnmatch's `[!abc]` negation to JS regex `[^abc]`, matching the
+  backend `fnmatch.translate` semantics. Previously a glob
+  pattern with `[!` rendered targets visually mismatched between
+  the table and the live injector.
+- **Frontend source-default parity**: serialize matches backend's
+  rule of "only a pure single-literal target defaults `source` to
+  the target." Multi-target rules with blank source no longer
+  collapse to a single-source rule on save.
+- **Version-from-manifest**: `INTEGRATION_VERSION` is now read
+  from `manifest.json` at import time instead of duplicated as a
+  hardcoded string in `websocket_api.py`. A regression test
+  locks the two together.
+
+### Internal
+
+- Build-time banner in the panel bundle (`[smart-icons] panel
+  bundle build <timestamp>`) prints to the browser console on
+  mount, so future "did my rebuild land?" investigations end with
+  one console line instead of a guess.
+
+**Full changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.3.0...v0.3.1a1>
+
 ## v0.3.0 — 2026-05-24
 
 **GA release of the v0.3 line.** Ships the consolidated content of

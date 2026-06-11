@@ -129,6 +129,27 @@ describe('Painter', () => {
     expect(icon.dataset.smartIconsOwned).to.equal('color');
   });
 
+  it('prunes knownHosts immediately on DOM removal via mutation observer', async () => {
+    // Previously knownHosts only pruned on the `host.isConnected` check
+    // inside repaintAll(). On dashboards with frequent view switches but
+    // infrequent state changes, dead host references could accumulate.
+    // The mutation observer's removedNodes path now prunes synchronously.
+    painter = new Painter();
+    painter.start();
+    host = makeTileCard('light.gone', { smart_icons_color: 'orange' });
+    document.body.appendChild(host);
+    await new Promise((r) => setTimeout(r, 20));
+    // The host is known after the mutation observer picks it up.
+    const known = (painter as unknown as { knownHosts: Set<HTMLElement> }).knownHosts;
+    expect([...known].some((h) => host.shadowRoot!.contains(h))).to.be.true;
+
+    // Remove the host. The mutation observer should drop the icon
+    // from knownHosts on the same mutation pass.
+    host.remove();
+    await new Promise((r) => setTimeout(r, 20));
+    expect([...known].some((h) => !h.isConnected)).to.be.false;
+  });
+
   it('releases the host when smart_icons_color is removed from attributes', async () => {
     host = makeTileCard('light.released', { smart_icons_color: 'red' });
     document.body.appendChild(host);

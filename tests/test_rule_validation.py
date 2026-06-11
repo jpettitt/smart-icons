@@ -128,6 +128,65 @@ def test_threshold_no_comparator_is_else_branch():
     assert out["thresholds"][0]["color"] == "#fff"
 
 
+def test_empty_thresholds_list_rejected():
+    """Empty thresholds list should be rejected — falsy check in
+    validate_rule catches both missing and empty cases. Audit coverage
+    for the exact "empty list" path (the missing-key path is already
+    covered by `test_thresholds_required_payload`)."""
+    with pytest.raises(vol.Invalid):
+        validate_rule(_thresholds_rule(thresholds=[]))
+
+
+def test_mapping_non_string_keys_rejected():
+    """YAML's bare `1:` becomes an int after parse. Backend rejects this
+    rather than silently coercing via str() — silent coercion produced
+    rules that didn't fire because the user expected `1` as a state."""
+    with pytest.raises(vol.Invalid, match="mapping keys must be strings"):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "mapping",
+                "mapping": {1: {"color": "#fff"}},
+            }
+        )
+
+
+def test_mapping_size_cap_rejected():
+    """Mappings beyond the cap (200 entries) are rejected — bounds the
+    evaluator's per-event scan against pathologically large payloads."""
+    huge = {f"state_{i}": {"color": "#fff"} for i in range(201)}
+    with pytest.raises(vol.Invalid, match="max is 200"):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "mapping",
+                "mapping": huge,
+            }
+        )
+
+
+def test_thresholds_size_cap_rejected():
+    """Thresholds lists beyond the cap (50 entries) are rejected."""
+    huge = [{"lt": i, "color": "#fff"} for i in range(1, 52)]
+    with pytest.raises(vol.Invalid, match="max is 50"):
+        validate_rule(_thresholds_rule(thresholds=huge))
+
+
+def test_source_attribute_length_cap_rejected():
+    """source_attribute over 255 chars is rejected — bounds a value
+    that's stored, persisted, and replayed on every state change."""
+    too_long = "a" * 256
+    with pytest.raises(vol.Invalid, match="exceeds max length"):
+        validate_rule(_thresholds_rule(source_attribute=too_long))
+
+
+def test_source_attribute_non_string_rejected():
+    """Non-string source_attribute is rejected — used to be `vol.Any(str, None)`
+    which silently accepted weird types via voluptuous coercion."""
+    with pytest.raises(vol.Invalid, match="must be a string or null"):
+        validate_rule(_thresholds_rule(source_attribute=123))
+
+
 def test_decoration_release_sentinels_accepted():
     out = validate_rule(
         _thresholds_rule(
