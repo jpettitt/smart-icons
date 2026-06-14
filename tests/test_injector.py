@@ -8,6 +8,7 @@ state-changed plumbing rather than mocking it.
 from __future__ import annotations
 
 import pytest
+from homeassistant.helpers.entity import StateInfo
 
 from custom_components.smart_icons.const import (
     ATTR_ICON,
@@ -875,3 +876,114 @@ async def test_injector_handles_target_vanishing_mid_runtime(
     await hass.async_block_till_done()
     # No exception → pass. State machine doesn't grow a fresh entity.
     assert hass.states.get("light.kitchen") is None
+
+
+async def test_injector_marks_smart_icons_attrs_as_unrecorded(
+    hass, config_entry  # noqa: ARG001
+):
+    """Each paint write should carry a state_info that tells the
+    recorder to skip `smart_icons_color` and `smart_icons_background`.
+    The state_changed event still fires (the painter needs it) but the
+    recorder strips those keys from the JSON it persists, reducing
+    state_attributes-table bloat on installs with broad glob rules."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {
+                "movie": {
+                    "color": "#ffff00",
+                    "background_color": "#43a047",
+                },
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.state_info is not None
+    unrec = state.state_info.get("unrecorded_attributes", frozenset())
+    assert ATTR_SMART_ICONS_COLOR in unrec
+    assert ATTR_SMART_ICONS_BACKGROUND in unrec
+    # ATTR_ICON is HA's standard mechanism — other integrations may
+    # legitimately change it, so we leave it recordable.
+    assert ATTR_ICON not in unrec
+
+
+async def test_injector_preserves_entity_owners_unrecorded_attrs(
+    hass, config_entry  # noqa: ARG001
+):
+    """When an entity declares its own unrecorded_attributes (e.g. a
+    sensor that excludes `last_reset` from history), our `async_set`
+    must MERGE our exclusion set with the entity's existing one rather
+    than replacing it — otherwise we'd silently re-enable recording
+    of attributes the entity author chose to exclude.
+    """
+    # Simulate an entity that has its own unrecorded_attributes set.
+    entity_unrec = frozenset({"some_owner_attr"})
+    entity_state_info: StateInfo = {"unrecorded_attributes": entity_unrec}
+    hass.states.async_set(
+        "light.kitchen",
+        "on",
+        state_info=entity_state_info,
+    )
+    hass.states.async_set("input_select.scene", "movie")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#ffff00"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    unrec = state.state_info.get("unrecorded_attributes", frozenset())
+    # The entity's existing declaration survives our overwrite.
+    assert "some_owner_attr" in unrec
+    # Our exclusions are added on top.
+    assert ATTR_SMART_ICONS_COLOR in unrec
+    assert ATTR_SMART_ICONS_BACKGROUND in unrec
+
+
+async def test_injector_marks_unrecorded_attrs_on_release_too(
+    hass, config_entry  # noqa: ARG001
+):
+    """The release path also carries the state_info hint. Strictly the
+    release write doesn't include our attrs in the new payload, so the
+    recorder hint is redundant for that specific row — but keeping the
+    hint uniform across both write paths makes the contract simpler
+    and matches what subsequent re-applies would write."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    rule = await store.async_upsert(
+        {
+            "target": "light.kitchen",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#ffff00"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    await store.async_delete(rule.id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    # Color attribute is cleared on release.
+    assert ATTR_SMART_ICONS_COLOR not in state.attributes
+    # state_info is still set — recorder hint travels with every write.
+    assert state.state_info is not None
+    unrec = state.state_info.get("unrecorded_attributes", frozenset())
+    assert ATTR_SMART_ICONS_COLOR in unrec
+    assert ATTR_SMART_ICONS_BACKGROUND in unrec
