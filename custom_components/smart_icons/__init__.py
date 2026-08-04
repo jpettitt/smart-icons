@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DATA_INJECTOR, DATA_STORE, DOMAIN
-from .frontend import async_register_frontend
+from .frontend import async_register_frontend, async_unregister_frontend
 from .injector import IconInjector
 from .store import RuleStore
 from .websocket_api import async_register_commands
@@ -59,4 +59,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if injector is not None:
         injector.async_stop()
     domain_data.pop(DATA_STORE, None)
+    # WS commands stay registered (HA has no unregister API); a call
+    # after unload errors on the missing hass.data store. Acceptable:
+    # the panel that issues those calls is removed here too.
+    async_unregister_frontend(hass)
     return True

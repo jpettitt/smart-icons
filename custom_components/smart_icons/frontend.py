@@ -19,6 +19,8 @@ import os
 from homeassistant.components.frontend import (
     add_extra_js_url,
     async_register_built_in_panel,
+    async_remove_panel,
+    remove_extra_js_url,
 )
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
@@ -122,3 +124,22 @@ async def async_register_frontend(hass: HomeAssistant) -> bool:
         )
 
     return True
+
+
+def async_unregister_frontend(hass: HomeAssistant) -> None:
+    """Mirror of async_register_frontend for entry unload: drop the
+    sidebar panel and stop injecting the painter bundle into new page
+    loads. Without this, removing the integration left a dead panel
+    entry and a 404-ing extra-js URL until restart, and re-adding the
+    entry re-registered the same panel path.
+
+    The static path registration has no removal API in HA; leaving it
+    is harmless (it serves files only while they exist on disk).
+    Already-open browser tabs keep their loaded painter until reload —
+    also fine, the attributes it reads are being released by the
+    injector at the same time.
+    """
+    # warn_if_unknown=False: the panel is only registered when its
+    # bundle exists, so removal must tolerate the never-registered case.
+    async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
+    remove_extra_js_url(hass, URL_JS)
