@@ -82,18 +82,26 @@ export class SmartIconsPanel extends LitElement {
   @state() private dialogOpen = false;
   @state() private editorError = '';
   @state() private pendingDelete: Rule | null = null;
-  // Cleared on next successful action or when the user dismisses it.
-  // Used for failures from out-of-dialog actions (toggle, delete, import)
-  // where there's no inline error surface — the editor has its own
-  // errorMessage.
-  @state() private actionError = '';
+  // Cleared on next action or when the user dismisses it. Used for
+  // out-of-dialog action outcomes (toggle, delete, whole-config save)
+  // where there's no inline surface — the editor has its own
+  // errorMessage. `kind` drives styling and the ARIA role: failures
+  // are role="alert" error-styled, successes ("Saved N rules.") are
+  // role="status" success-styled instead of borrowing error chrome.
+  @state() private actionNotice: {
+    text: string;
+    kind: 'error' | 'success';
+  } | null = null;
 
   // Per-rule YAML lives inside the rule editor itself via the
   // "Show code editor" toggle (HA automation-editor pattern).
   // Whole-config YAML lives here on the panel via the same toggle —
   // entering code mode dumps every rule as a top-level `rules:` list
-  // (ids included so save can match each entry to its store record);
-  // exiting via Save replaces the whole config.
+  // and exiting via Save replaces the whole config. NOTE: the export
+  // strips ids (stripForExport), so every whole-config save re-mints
+  // rule ids server-side and resets `created` stamps — the trade for
+  // gist-friendly YAML. Preserving identity across round-trips is an
+  // open TODO item.
   @state() private codeMode = false;
   @state() private codeText = '';
   // What we wrote into codeText when entering code mode. Compared
@@ -215,16 +223,23 @@ export class SmartIconsPanel extends LitElement {
             ? nothing
             : html`<ha-button raised @click=${this.addRule}>+ Add rule</ha-button>`}
         </header>
-        ${this.actionError
+        ${this.actionNotice
           ? html`
-              <div class="action-error" role="alert">
-                <span>${this.actionError}</span>
+              <div
+                class="action-error ${this.actionNotice.kind === 'success'
+                  ? 'action-success'
+                  : ''}"
+                role=${this.actionNotice.kind === 'success'
+                  ? 'status'
+                  : 'alert'}
+              >
+                <span>${this.actionNotice.text}</span>
                 <!-- "×" dismiss affordance — bare button per
                      docs/ha-elements-guide.md decision tree, item 4
                      (icon-button-style, not a primary action). -->
                 <button
                   class="action-error-dismiss"
-                  @click=${this.clearActionError}
+                  @click=${this.clearActionNotice}
                   aria-label="Dismiss"
                 >×</button>
               </div>
@@ -469,8 +484,8 @@ export class SmartIconsPanel extends LitElement {
     }
   }
 
-  private clearActionError = (): void => {
-    this.actionError = '';
+  private clearActionNotice = (): void => {
+    this.actionNotice = null;
   };
 
   private renderDeleteConfirm() {
@@ -806,12 +821,15 @@ export class SmartIconsPanel extends LitElement {
         type: 'smart_icons/upsert',
         rule: { ...rule, enabled },
       });
-      this.actionError = '';
+      this.actionNotice = null;
     } catch (err) {
       // Snap the switch back so the UI matches reality. The server-side
       // upsert never landed, so we shouldn't show the new state.
       target.checked = rule.enabled;
-      this.actionError = `Couldn't ${enabled ? 'enable' : 'disable'} rule: ${this.errorMessage(err)}`;
+      this.actionNotice = {
+        kind: 'error',
+        text: `Couldn't ${enabled ? 'enable' : 'disable'} rule: ${this.errorMessage(err)}`,
+      };
     }
   }
 
@@ -929,7 +947,10 @@ export class SmartIconsPanel extends LitElement {
       });
       this.codeSubmitting = false;
       this.exitCodeMode();
-      this.actionError = `Saved ${parsed.rules.length} rule${parsed.rules.length === 1 ? '' : 's'}.`;
+      this.actionNotice = {
+        kind: 'success',
+        text: `Saved ${parsed.rules.length} rule${parsed.rules.length === 1 ? '' : 's'}.`,
+      };
     } catch (err) {
       this.codeSubmitting = false;
       // The server's replace_all error frame can include a
@@ -973,10 +994,13 @@ export class SmartIconsPanel extends LitElement {
         type: 'smart_icons/delete',
         rule_id: rule.id,
       });
-      this.actionError = '';
+      this.actionNotice = null;
     } catch (err) {
       const label = rule.targets[0] ?? rule.id;
-      this.actionError = `Couldn't delete rule for ${label}: ${this.errorMessage(err)}`;
+      this.actionNotice = {
+        kind: 'error',
+        text: `Couldn't delete rule for ${label}: ${this.errorMessage(err)}`,
+      };
     }
   };
 
