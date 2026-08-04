@@ -188,6 +188,39 @@ async def test_injector_stops_cleanly_on_unload(
     assert ATTR_SMART_ICONS_COLOR not in hass.states.get("light.kitchen").attributes
 
 
+async def test_config_entry_unload_releases_attrs_and_frontend(
+    hass, config_entry
+):
+    """Full config-entry unload: injected attributes are released, the
+    sidebar panel is deregistered, and the painter bundle's extra-JS
+    URL is withdrawn. Exercises async_unload_entry end-to-end rather
+    than calling injector.async_stop() directly."""
+    from homeassistant.components.frontend import async_panel_exists
+
+    from custom_components.smart_icons.const import PANEL_URL_PATH
+    from custom_components.smart_icons.frontend import URL_JS
+
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+    await store.async_upsert(_mapping_rule())
+    await hass.async_block_till_done()
+    assert ATTR_SMART_ICONS_COLOR in hass.states.get("light.kitchen").attributes
+    assert async_panel_exists(hass, PANEL_URL_PATH)
+
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert ATTR_SMART_ICONS_COLOR not in state.attributes
+    assert ATTR_ICON not in state.attributes
+    assert not async_panel_exists(hass, PANEL_URL_PATH)
+    # frontend stores extra module URLs in a UrlManager with a .urls
+    # frozenset (hass.data["frontend_extra_module_url"]).
+    url_manager = hass.data["frontend_extra_module_url"]
+    assert URL_JS not in url_manager.urls
+
+
 async def test_injector_reads_source_attribute(
     hass, config_entry  # noqa: ARG001
 ):
@@ -820,10 +853,15 @@ async def test_injector_invalidates_glob_cache_when_new_entity_appears(
 async def test_injector_does_not_clobber_source_overwritten_icon(
     hass, config_entry  # noqa: ARG001
 ):
-    """If the source integration replaces our icon with its own value
-    between our write and our clear, we must NOT pop that value — only
-    our own writes are ours to clean up. This is the safety guarantee
-    that lets _release_target be aggressive about icon-clearing."""
+    """If the target's integration sets its own icon while our rule does
+    NOT address the icon field, we must neither overwrite nor pop that
+    value — only our own writes are ours to clean up. This is the
+    safety guarantee that lets _release_target be aggressive about
+    icon-clearing.
+
+    (While a rule that *does* address icon is active, the rule wins —
+    see test_injector_reasserts_icon_over_target_overwrite_while_active.)
+    """
     hass.states.async_set("input_select.scene", "movie")
     hass.states.async_set("light.kitchen", "on")
     store = hass.data[DOMAIN][DATA_STORE]
@@ -832,10 +870,201 @@ async def test_injector_does_not_clobber_source_overwritten_icon(
     await hass.async_block_till_done()
     assert hass.states.get("light.kitchen").attributes[ATTR_ICON] == "mdi:movie-open"
 
-    # Simulate the source integration pushing a fresh state with its
-    # own icon. (In production this happens when the upstream
-    # integration republishes attributes.) The injector hasn't been
-    # told about this — it still believes "we last wrote mdi:movie-open."
+    # Source flips to the _else branch (color only, no icon) — our icon
+    # is popped and ownership released.
+    hass.states.async_set("input_select.scene", "party")
+    await hass.async_block_till_done()
+    assert ATTR_ICON not in hass.states.get("light.kitchen").attributes
+
+    # The target's integration republishes with its own icon. The rule
+    # takes no position on icon, so the re-apply must leave it alone.
+    hass.states.async_set(
+        "light.kitchen",
+        "on",
+        {ATTR_ICON: "mdi:source-owned-icon"},
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_ICON] == "mdi:source-owned-icon"
+    # The color re-applied around it.
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#cccccc"
+
+    # Deleting the rule clears our color but leaves the icon we never
+    # owned.
+    await store.async_delete(rule.id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_ICON] == "mdi:source-owned-icon"
+    assert ATTR_SMART_ICONS_COLOR not in state.attributes
+
+
+async def test_injector_restores_entity_own_icon_on_rule_deletion(
+    hass, config_entry  # noqa: ARG001
+):
+    """An entity that publishes its OWN icon (e.g. input_boolean with
+    `icon:` in YAML) gets that icon back when the rule is deleted —
+    not a popped attribute that drops it to the domain/state default
+    glyph until the owner next republishes. Regression for the
+    release-edge bug found testing v0.3.1 (lamp helper showed the ⊗
+    close-circle default after rule disable)."""
+    hass.states.async_set(
+        "input_boolean.test_lamp", "off", {ATTR_ICON: "mdi:lamp"}
+    )
+    hass.states.async_set("input_select.scene", "movie")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    rule = await store.async_upsert(
+        {
+            "target": "input_boolean.test_lamp",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#000", "icon": "mdi:snowflake"}},
+        }
+    )
+    await hass.async_block_till_done()
+    assert (
+        hass.states.get("input_boolean.test_lamp").attributes[ATTR_ICON]
+        == "mdi:snowflake"
+    )
+
+    await store.async_delete(rule.id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("input_boolean.test_lamp")
+    assert state.attributes.get(ATTR_ICON) == "mdi:lamp"
+    assert ATTR_SMART_ICONS_COLOR not in state.attributes
+
+
+async def test_injector_restores_entity_own_icon_when_rule_drops_icon(
+    hass, config_entry  # noqa: ARG001
+):
+    """Same restore semantics on the edit path: when evaluation stops
+    addressing `icon` (source moves to a color-only branch), the
+    owner's original icon comes back via _apply_target, not just via
+    rule deletion."""
+    hass.states.async_set(
+        "input_boolean.test_lamp", "off", {ATTR_ICON: "mdi:lamp"}
+    )
+    hass.states.async_set("input_select.scene", "movie")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(
+        {
+            "target": "input_boolean.test_lamp",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {
+                "movie": {"color": "#000", "icon": "mdi:snowflake"},
+                "_else": {"color": "#ccc"},
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert (
+        hass.states.get("input_boolean.test_lamp").attributes[ATTR_ICON]
+        == "mdi:snowflake"
+    )
+
+    hass.states.async_set("input_select.scene", "party")
+    await hass.async_block_till_done()
+
+    state = hass.states.get("input_boolean.test_lamp")
+    assert state.attributes.get(ATTR_ICON) == "mdi:lamp"
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#ccc"
+
+
+async def test_injector_restore_tracks_owner_republished_icon(
+    hass, config_entry  # noqa: ARG001
+):
+    """When the owner republishes with a NEW own icon while a rule
+    holds the attribute, the re-apply overwrites it again (active rule
+    wins) but refreshes the recorded original — so a later release
+    hands back the owner's latest icon, not the stale pre-rule one."""
+    hass.states.async_set(
+        "input_boolean.test_lamp", "off", {ATTR_ICON: "mdi:lamp"}
+    )
+    hass.states.async_set("input_select.scene", "movie")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    rule = await store.async_upsert(
+        {
+            "target": "input_boolean.test_lamp",
+            "source": "input_select.scene",
+            "mode": "mapping",
+            "mapping": {"movie": {"color": "#000", "icon": "mdi:snowflake"}},
+        }
+    )
+    await hass.async_block_till_done()
+
+    # Owner republishes with a changed icon of its own (wipes our attrs).
+    hass.states.async_set(
+        "input_boolean.test_lamp", "on", {ATTR_ICON: "mdi:lamp-outline"}
+    )
+    await hass.async_block_till_done()
+    # Active rule re-asserts its icon…
+    assert (
+        hass.states.get("input_boolean.test_lamp").attributes[ATTR_ICON]
+        == "mdi:snowflake"
+    )
+
+    # …but release restores the owner's LATEST icon.
+    await store.async_delete(rule.id)
+    await hass.async_block_till_done()
+    assert (
+        hass.states.get("input_boolean.test_lamp").attributes.get(ATTR_ICON)
+        == "mdi:lamp-outline"
+    )
+
+
+async def test_injector_reapplies_after_target_own_state_republish(
+    hass, config_entry  # noqa: ARG001
+):
+    """Regression: an explicit-source rule's decoration must survive the
+    target's own integration republishing state. Entity platforms rebuild
+    the attribute bag from their own properties on every write, dropping
+    our injected keys; the injector tracks targets (not just sources) so
+    a target-side state_changed re-applies the decoration immediately —
+    not at the next source change, which for slow sources could be
+    minutes away."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(_mapping_rule())
+    await hass.async_block_till_done()
+    assert (
+        hass.states.get("light.kitchen").attributes[ATTR_SMART_ICONS_COLOR]
+        == "#000000"
+    )
+
+    # The light's integration republishes (toggle, brightness change…)
+    # with an attribute bag that lacks our injected keys.
+    hass.states.async_set("light.kitchen", "off", {"friendly_name": "Kitchen"})
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.kitchen")
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#000000"
+    assert state.attributes[ATTR_ICON] == "mdi:movie-open"
+    # The target's own state value is untouched by the re-apply.
+    assert state.state == "off"
+
+
+async def test_injector_reasserts_icon_over_target_overwrite_while_active(
+    hass, config_entry  # noqa: ARG001
+):
+    """While a rule that addresses `icon` is active, the rule's icon wins
+    over a target-integration write — the re-apply on target republish
+    overwrites it, same as the next source change always did. The
+    non-clobber guarantee is a *clear-time* guarantee (see
+    test_injector_does_not_clobber_source_overwritten_icon)."""
+    hass.states.async_set("input_select.scene", "movie")
+    hass.states.async_set("light.kitchen", "on")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(_mapping_rule())
+    await hass.async_block_till_done()
+
     hass.states.async_set(
         "light.kitchen",
         "on",
@@ -843,13 +1072,32 @@ async def test_injector_does_not_clobber_source_overwritten_icon(
     )
     await hass.async_block_till_done()
 
-    # Now delete our rule. The icon attribute is no longer "ours" —
-    # current value differs from what we recorded — so we leave it.
-    await store.async_delete(rule.id)
+    assert (
+        hass.states.get("light.kitchen").attributes[ATTR_ICON]
+        == "mdi:movie-open"
+    )
+
+
+async def test_injector_decorates_explicit_source_target_appearing_late(
+    hass, config_entry  # noqa: ARG001
+):
+    """A literal target of an explicit-source rule that doesn't exist at
+    rule-creation time gets decorated when it first appears — target
+    tracking subscribes to not-yet-existing entity ids, and
+    async_track_state_change_event fires on their first write."""
+    hass.states.async_set("input_select.scene", "movie")
+    store = hass.data[DOMAIN][DATA_STORE]
+
+    await store.async_upsert(_mapping_rule())
+    await hass.async_block_till_done()
+    assert hass.states.get("light.kitchen") is None
+
+    hass.states.async_set("light.kitchen", "on")
     await hass.async_block_till_done()
 
     state = hass.states.get("light.kitchen")
-    assert state.attributes[ATTR_ICON] == "mdi:source-owned-icon"
+    assert state.attributes[ATTR_SMART_ICONS_COLOR] == "#000000"
+    assert state.attributes[ATTR_ICON] == "mdi:movie-open"
 
 
 async def test_injector_handles_target_vanishing_mid_runtime(

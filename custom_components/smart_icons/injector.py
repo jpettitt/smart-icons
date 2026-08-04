@@ -1,8 +1,12 @@
 """Server-side icon, color, and background injection.
 
-Subscribes to `state_changed` events for every rule's `source` entity.
-On each change, evaluates the relevant rules and writes the merged
-decoration onto the matching `target` entity's state attributes:
+Subscribes to `state_changed` events for every rule's `source` entity
+AND its resolved targets — a target integration's own state write
+rebuilds the attribute bag without our injected keys, and the
+target-side event is what lets us restore them immediately instead of
+waiting for the next source change. On each change, evaluates the
+relevant rules and writes the merged decoration onto the matching
+`target` entity's state attributes:
 
   - `icon`                  → HA's standard glyph attribute. `ha-state-icon`
                               reads this natively — no frontend cooperation
@@ -23,16 +27,23 @@ render, and the icon update flows through the same code path templated
 entities already use.
 
 Icon clearing semantics:
-- When a rule drops its `icon` field (edit) or the rule is removed
-  (delete), we pop the `icon` attribute from the target's state IFF
-  the current value still equals what we last wrote. This restores
-  HA's default fallback (domain / device-class icon) and avoids
-  the "stale icon sticks forever" surprise that plagued v0.1/0.2.
-- If the source integration overwrote our icon between the time we
-  set it and the time we'd clear it, the current value won't match
-  our recorded last-write and we leave the source's value alone.
-  `_injected_icons` (target → last-written icon string) is the
-  bookkeeping that makes this safe.
+- When we first overwrite a target's `icon` attribute we record the
+  value that was there (the owner's own icon — e.g. an input_boolean's
+  `icon:` from YAML — or None if there was none) alongside what we
+  wrote. When a rule drops its `icon` field (edit) or the rule is
+  removed (delete), and the current value still equals what we last
+  wrote, we *restore* the recorded original — or pop the attribute
+  when the entity never had one, falling back to HA's domain /
+  device-class default. Popping unconditionally was the v0.3.1 bug
+  where an icon-customized helper showed the domain default glyph
+  until its integration next republished.
+- If the owner integration overwrote our icon between our write and
+  our clear, the current value won't match our recorded last-write and
+  we leave the owner's value alone. The re-apply-on-target-republish
+  path refreshes the recorded original at the same time, so the value
+  we hand back on release tracks the owner's latest published icon.
+  `_icon_claims` (target → `_IconClaim`) is the bookkeeping that makes
+  both halves safe.
 
 Other trade-offs:
 - Calling `hass.states.async_set` fires `state_changed`, which can wake
@@ -56,6 +67,7 @@ from __future__ import annotations
 
 import fnmatch
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.const import EVENT_STATE_CHANGED
@@ -101,6 +113,23 @@ def _is_glob(entry: str) -> bool:
     return any(c in entry for c in _GLOB_CHARS)
 
 
+@dataclass(slots=True)
+class _IconClaim:
+    """Bookkeeping for a target whose `icon` attribute we've overwritten.
+
+    `written` is the last value we wrote; `original` is the owner's own
+    icon at claim time (None if the entity had no icon attribute). The
+    original may lag reality for entities whose own icon is
+    state-dependent, but the owner's next state write replaces the whole
+    attribute bag anyway — the restored value is only ever a stopgap
+    until then, and the owner's *last published* glyph beats the domain
+    default.
+    """
+
+    written: str
+    original: str | None
+
+
 class IconInjector:
     """State subscriber that pushes computed decorations to target entities."""
 
@@ -115,10 +144,9 @@ class IconInjector:
         # Targets we've written color/background into, so we can clear
         # cleanly on rule removal.
         self._injected_targets: set[str] = set()
-        # Per-target record of the last `icon` value we wrote. Used to
-        # tell "our icon" from "the source's icon" when deciding
-        # whether to pop the attribute on rule edit/delete.
-        self._injected_icons: dict[str, str] = {}
+        # Per-target icon bookkeeping: what we last wrote AND what the
+        # owner had before we claimed the attribute — see _IconClaim.
+        self._icon_claims: dict[str, _IconClaim] = {}
         # Per-rule resolved target sets (rule.id → set of entity_ids).
         # `_resolve_targets` builds entries lazily and we invalidate
         # surgically rather than blowing the cache away on every state
@@ -176,7 +204,7 @@ class IconInjector:
         if self._unsub_new_entity:
             self._unsub_new_entity()
             self._unsub_new_entity = None
-        for target in list(self._injected_targets | set(self._injected_icons)):
+        for target in list(self._injected_targets | set(self._icon_claims)):
             self._release_target(target)
         self._tracked_sources.clear()
 
@@ -197,7 +225,7 @@ class IconInjector:
         for target in self._resolve_targets(rule):
             self._apply_target(target)
         active = self._active_targets()
-        for target in list(self._injected_targets | set(self._injected_icons)):
+        for target in list(self._injected_targets | set(self._icon_claims)):
             if target not in active:
                 self._release_target(target)
 
@@ -277,12 +305,21 @@ class IconInjector:
             if not r.enabled:
                 continue
             if r.source:
-                # Explicit source — subscribe to that one entity for this rule.
+                # Explicit source — subscribe to that entity for this rule.
                 sources.add(r.source)
-            else:
-                # Per-target rule — subscribe to each resolved target so
-                # changes to its own state retrigger evaluation.
-                sources |= self._resolve_targets(r)
+            # Always track the resolved targets too, even with an explicit
+            # source: the target's own integration republishes state at any
+            # time (toggle, brightness, sensor update) and that write
+            # rebuilds the attribute bag WITHOUT our injected keys. Only a
+            # target-side event lets us re-apply; before this, explicit-
+            # source decorations silently vanished until the *source* next
+            # changed. Re-entrancy is safe — our own async_set retriggers
+            # this path, but _apply_target's pre-flight finds nothing to
+            # change and no-ops. Tracking literal targets that don't exist
+            # yet is free (async_track_state_change_event fires when they
+            # appear), which also fixes late-appearing explicit-source
+            # targets.
+            sources |= self._resolve_targets(r)
         if sources == self._tracked_sources:
             return
         if self._unsub_state is not None:
@@ -374,23 +411,24 @@ class IconInjector:
     def _targets_for_source(self, source: str) -> set[str]:
         """Which targets are affected when `source`'s state changes?
 
-        For explicit-source rules: all of the rule's targets (one source
-        drives them all). For per-target rules: only the single target
-        that *is* `source` — other targets aren't affected by another
-        target's state change.
+        For explicit-source rules: all of the rule's targets when the
+        *source* changed; just the one target when a *target* republished
+        its own state (its integration's write wiped our attrs — re-apply
+        them). For per-target rules: only the single target that *is*
+        `source` — other targets aren't affected by another target's
+        state change.
         """
         out: set[str] = set()
         for r in self._store.all_view():
             if not r.enabled:
                 continue
             resolved = self._resolve_targets(r)
-            if r.source:
-                if r.source == source:
-                    out |= resolved
-            else:
-                # Per-target: only the matching target itself.
-                if source in resolved:
-                    out.add(source)
+            if r.source and r.source == source:
+                out |= resolved
+            elif source in resolved:
+                # Either a per-target rule, or an explicit-source rule
+                # whose target just republished — re-apply that target.
+                out.add(source)
         return out
 
     # --- The actual write --------------------------------------------------
@@ -454,19 +492,25 @@ class IconInjector:
         winning_color = winner.get("color")
         winning_bg = winner.get("background_color")
 
-        # Icon: set when the rule addresses it, pop only when it still
-        # matches the last value we wrote (avoid clobbering the source
-        # integration's icon if it overwrote ours since).
-        last_icon = self._injected_icons.get(target)
+        # Icon: set when the rule addresses it. When the rule stops
+        # addressing it and the current value is still ours, hand back
+        # the owner's original icon (restore) — or pop when the entity
+        # never had one. Never touch a value we didn't write (the owner
+        # overwrote us since).
+        claim = self._icon_claims.get(target)
+        current_icon = current_attrs.get(ATTR_ICON)
+        icon_set = False
+        icon_restore_value: str | None = None
+        icon_pop = False
         if winning_icon is not None:
-            icon_set = current_attrs.get(ATTR_ICON) != winning_icon
-            icon_pop = False
-        else:
-            icon_set = False
-            icon_pop = (
-                last_icon is not None
-                and current_attrs.get(ATTR_ICON) == last_icon
-            )
+            icon_set = current_icon != winning_icon
+        elif claim is not None and current_icon == claim.written:
+            if claim.original is None:
+                icon_pop = True
+            elif claim.original != current_icon:
+                # (equal means the rule's icon happened to match the
+                # owner's own — nothing to write back.)
+                icon_restore_value = claim.original
 
         color_set = (
             winning_color is not None
@@ -486,21 +530,40 @@ class IconInjector:
 
         # Bookkeeping for icon ownership runs regardless of whether the
         # on-state attribute actually changes. We claim ownership any
-        # time the rule addresses icon (so future drops re-pop it), and
-        # release ownership any time the rule stops addressing icon —
-        # this mirrors the original semantics and is independent of
-        # whether the cascading `async_set` is fired.
+        # time the rule addresses icon (so future drops restore/pop),
+        # and release ownership any time the rule stops addressing it.
+        # The original is captured on first claim and *refreshed*
+        # whenever the current value isn't ours — that's the owner
+        # having republished since our last write (e.g. the
+        # target-republish re-apply path), and whatever they published
+        # is the new baseline to hand back on release.
         if winning_icon is not None:
-            self._injected_icons[target] = winning_icon
+            if claim is None or current_icon != claim.written:
+                original = current_icon
+            else:
+                original = claim.original
+            self._icon_claims[target] = _IconClaim(
+                written=winning_icon, original=original
+            )
         else:
-            self._injected_icons.pop(target, None)
+            self._icon_claims.pop(target, None)
 
-        if not (icon_set or icon_pop or color_set or color_pop or bg_set or bg_pop):
+        if not (
+            icon_set
+            or icon_restore_value is not None
+            or icon_pop
+            or color_set
+            or color_pop
+            or bg_set
+            or bg_pop
+        ):
             return
 
         new_attrs: dict[str, Any] = dict(current_attrs)
         if icon_set:
             new_attrs[ATTR_ICON] = winning_icon
+        elif icon_restore_value is not None:
+            new_attrs[ATTR_ICON] = icon_restore_value
         elif icon_pop:
             new_attrs.pop(ATTR_ICON, None)
         if color_set:
@@ -523,32 +586,38 @@ class IconInjector:
     @callback
     def _release_target(self, target: str) -> None:
         """Strip every attribute this injector ever wrote for `target`:
-        smart_icons_color, smart_icons_background, and icon (the last
-        only when the current value still equals what we last wrote —
-        see file header). HA's frontend falls back to the
-        domain/device-class default when `icon` is popped, which is the
-        right behavior on rule deletion."""
-        had_icon_record = target in self._injected_icons
+        smart_icons_color, smart_icons_background, and icon — the last
+        only when the current value still equals what we last wrote,
+        and by *restoring* the owner's original icon when one existed
+        (popping only when the entity never had its own — see file
+        header)."""
+        had_icon_record = target in self._icon_claims
         if target not in self._injected_targets and not had_icon_record:
             return
         self._injected_targets.discard(target)
-        last_icon = self._injected_icons.pop(target, None)
+        claim = self._icon_claims.pop(target, None)
         current = self._hass.states.get(target)
         if current is None:
             return
         had_color = ATTR_SMART_ICONS_COLOR in current.attributes
         had_bg = ATTR_SMART_ICONS_BACKGROUND in current.attributes
         icon_is_ours = (
-            last_icon is not None
-            and current.attributes.get(ATTR_ICON) == last_icon
+            claim is not None
+            and current.attributes.get(ATTR_ICON) == claim.written
         )
-        if not (had_color or had_bg or icon_is_ours):
+        # A restore is a real write only when the original differs from
+        # what's on the state now (rule icon == owner icon → no-op).
+        icon_changes = icon_is_ours and claim.original != claim.written
+        if not (had_color or had_bg or icon_changes):
             return
         new_attrs = dict(current.attributes)
         new_attrs.pop(ATTR_SMART_ICONS_COLOR, None)
         new_attrs.pop(ATTR_SMART_ICONS_BACKGROUND, None)
         if icon_is_ours:
-            new_attrs.pop(ATTR_ICON, None)
+            if claim.original is not None:
+                new_attrs[ATTR_ICON] = claim.original
+            else:
+                new_attrs.pop(ATTR_ICON, None)
         self._hass.states.async_set(
             target,
             current.state,
