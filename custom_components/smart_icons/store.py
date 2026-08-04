@@ -8,6 +8,7 @@ WebSocket fan-out.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -23,6 +24,8 @@ from .const import (
     STORAGE_VERSION,
 )
 from .rule import BulkReplaceError, Rule, validate_rule
+
+_LOGGER = logging.getLogger(__name__)
 
 Listener = Callable[[str, Rule], None]
 
@@ -55,7 +58,19 @@ class RuleStore:
             try:
                 validated = validate_rule(raw)
                 rule = Rule.from_dict(validated)
-            except (vol.Invalid, ValueError):
+            except (vol.Invalid, ValueError) as exc:
+                # Loud, not silent: the schema is PREVENT_EXTRA, so a rule
+                # written by a newer version (or hand-edited storage) is
+                # dropped here — the user deserves to know which one and
+                # why instead of rules quietly vanishing after a downgrade.
+                _LOGGER.warning(
+                    "Dropping invalid stored rule (id=%s, targets=%s): %s",
+                    raw.get("id") if isinstance(raw, dict) else None,
+                    raw.get("targets") or raw.get("target")
+                    if isinstance(raw, dict)
+                    else None,
+                    exc,
+                )
                 continue
             if not rule.id:
                 continue

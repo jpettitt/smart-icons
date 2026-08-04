@@ -88,8 +88,11 @@ async def test_round_trip_through_save_load(hass, store):
     assert ids == {rule_a.id, rule_b.id}
 
 
-async def test_load_skips_corrupt_entries(hass, tmp_path, monkeypatch):
-    """A bad entry on disk is dropped, good entries still load."""
+async def test_load_skips_corrupt_entries(hass, tmp_path, monkeypatch, caplog):
+    """A bad entry on disk is dropped — loudly — and good entries still
+    load. The WARNING matters: PREVENT_EXTRA means rules written by a
+    newer version fail validation after a downgrade, and silence here
+    would look like data loss with no explanation."""
     from custom_components.smart_icons.store import RuleStore
 
     fresh = RuleStore(hass)
@@ -110,6 +113,8 @@ async def test_load_skips_corrupt_entries(hass, tmp_path, monkeypatch):
     await fresh.async_load()
     ids = [r.id for r in fresh.all()]
     assert ids == ["01GOOD"]
+    assert "Dropping invalid stored rule" in caplog.text
+    assert "01BAD" in caplog.text
 
 
 @pytest.mark.parametrize("priority", [1, 10, 100])
