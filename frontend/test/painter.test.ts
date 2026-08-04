@@ -299,6 +299,60 @@ describe('applyStateObjPatch', () => {
     expect(inst.dataset.smartIconsOwned).to.equal('color');
   });
 
+  it('wins over a card-managed inline color written before the stateObj commit (HA 2026.8 entities card)', () => {
+    // Since HA 2026.8 (frontend PR #53151) the entities card state-
+    // colors icons for ALL domains by default: state-badge's template
+    // is `<ha-state-icon style=${styleMap(...)} … .stateObj=${...}>`,
+    // so Lit commits a managed inline `color` BEFORE the stateObj
+    // property part. Our patched setter runs on the stateObj commit —
+    // after the styleMap write — so a decorated entity must end up
+    // with OUR color. If HA reorders that template, this ordering
+    // breaks; this test documents the dependency.
+    const { klass } = makeFakeIconClass();
+    applyStateObjPatch(klass);
+
+    const inst = new (klass as unknown as {
+      new (): {
+        style: { color: string };
+        dataset: Record<string, string | undefined>;
+        stateObj: unknown;
+      };
+    })();
+    // styleMap's write (HA's state color) lands first…
+    inst.style.color = 'rgb(255, 152, 0)';
+    // …then the stateObj property part commits.
+    inst.stateObj = {
+      entity_id: 'light.kitchen',
+      state: 'on',
+      attributes: { smart_icons_color: '#abcdef' },
+    };
+    expect(inst.style.color).to.equal('#abcdef');
+  });
+
+  it('leaves a card-managed inline color alone on entities smart-icons does not decorate', () => {
+    // The converse of the test above: for an undecorated entity the
+    // setter must not release a color it never owned — HA's own state
+    // color (managed inline since 2026.8) has to survive our patch.
+    const { klass } = makeFakeIconClass();
+    applyStateObjPatch(klass);
+
+    const inst = new (klass as unknown as {
+      new (): {
+        style: { color: string };
+        dataset: Record<string, string | undefined>;
+        stateObj: unknown;
+      };
+    })();
+    inst.style.color = 'rgb(255, 152, 0)';
+    inst.stateObj = {
+      entity_id: 'light.kitchen',
+      state: 'on',
+      attributes: {},
+    };
+    expect(inst.style.color).to.equal('rgb(255, 152, 0)');
+    expect(inst.dataset.smartIconsOwned).to.be.undefined;
+  });
+
   it("calls the original setter so Lit's reactive machinery still runs", () => {
     const { klass, setHistory } = makeFakeIconClass();
     applyStateObjPatch(klass);

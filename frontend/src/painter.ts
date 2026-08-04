@@ -26,6 +26,22 @@
  *    cycle. Discovers icons in surfaces (Lovelace view switches,
  *    state-badge wrappers) where the crawler misses mounts.
  *
+ *    Ordering dependency vs HA's own state colors: since HA 2026.8
+ *    (frontend PR #53151) the entities card colors icons for all
+ *    domains by default — state-badge renders
+ *    `<ha-state-icon style=${styleMap(...)} … .stateObj=${...}>`,
+ *    actively managing inline `color` on the exact element we paint.
+ *    We win only because Lit commits template parts in order: the
+ *    styleMap attribute part first, the stateObj property part (our
+ *    setter) last. If HA ever reorders that template, decorated
+ *    entities-card rows would show HA's state color instead of ours —
+ *    the painter.test.ts "wins over a card-managed inline color" test
+ *    documents the dependency. Known cosmetic edge: on decoration
+ *    release we set `style.color = ''`, but styleMap's internal record
+ *    still holds its last value, so it won't rewrite until HA's
+ *    computed color next *changes* — until then the row shows the
+ *    plain theme color rather than HA's state color.
+ *
  * 2. **Fallback — shadow-piercing MutationObserver crawler** (the
  *    `Painter` class below). Adopts ha-state-icon elements as they
  *    appear in DOM, then paints via the watcher cache. Same
