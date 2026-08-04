@@ -1,6 +1,71 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
+## Unreleased
+
+Review sweep against HA 2026.8 (verified: full backend suite passes on
+2026.8.0b3; the painter's mechanism was checked against the shipped
+2026.8 frontend bundle).
+
+### Fixed
+
+- **Explicit-source rules no longer lose their decoration when the
+  target's own integration republishes state.** The injector only
+  subscribed to rule *sources*; a target entity's own write (toggle,
+  brightness, sensor update) rebuilds its attribute bag without our
+  injected keys, and nothing restored them until the source next
+  changed — for slow sources, minutes of missing decoration. The
+  injector now also tracks resolved targets and re-applies
+  immediately. Side effect (behavior change): while a rule that sets
+  an `icon` is active, the rule's icon now re-asserts over a
+  target-integration icon write immediately rather than at the next
+  source change; the clear-time guarantee (never pop an icon we
+  didn't write) is unchanged. Also fixes literal targets of
+  explicit-source rules created before the target entity exists —
+  they now get decorated on first appearance.
+- **Unloading the config entry now removes the sidebar panel and the
+  painter's extra-JS registration.** Previously both survived unload
+  until restart, and re-adding the entry re-registered the panel path.
+- **Releasing a rule restores the entity's own icon instead of
+  popping the attribute.** An entity with its own `icon` (e.g. a
+  helper with `icon:` in YAML, or any integration-published icon)
+  showed the bare domain/state default glyph after rule
+  delete/disable/edit until its integration next republished. The
+  injector now records the owner's icon when it first claims the
+  attribute (refreshing the record whenever the owner republishes
+  mid-rule) and writes it back on release; popping is reserved for
+  entities that never had an icon of their own. Found live-testing
+  the target-republish fix in the dev container.
+
+### Changed
+
+- **Rules dropped at load are now logged at WARNING** with the rule id,
+  targets, and validation error. The schema is strict (unknown keys
+  fail), so a downgrade could silently discard rules written by a
+  newer version — now it's at least loud. (Making unknown keys
+  round-trip is an open TODO item.)
+- **Decoration values and mapping keys are length-capped at 255
+  chars** (same cap as `source_attribute`) — `icon` is
+  recorder-persisted, so unbounded values would land in the database.
+- Panel: the "Saved N rules." confirmation now renders as a
+  success-styled `role="status"` notice instead of borrowing the
+  error banner's styling and `role="alert"`.
+
+### Documentation
+
+- README: HA 2026.8 interop section (entities card now state-colors
+  all icons by default; how per-row `color:` and `color: none`
+  interact with rules), the registry-custom-icon glyph limitation,
+  corrected compatibility floor (2025.1 per hacs.json), and removal
+  of the inaccurate "debounced writes" claim.
+- DESIGN.md reconciled with as-built behavior: PREVENT_EXTRA
+  validation (not ALLOW_EXTRA), immediate (not debounced) saves,
+  § 7.3 politeness marked not-implemented, injector target-tracking.
+- painter.ts documents the Lit template part-order dependency that
+  makes decorations win over HA 2026.8's managed entities-card icon
+  colors, with regression tests for both the decorated and
+  undecorated cases.
+
 ## v0.3.1a1 — 2026-06-10
 
 First alpha of the v0.3.1 line. Two threads of work: a code-review

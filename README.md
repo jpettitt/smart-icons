@@ -254,14 +254,36 @@ natural color alone.
 
 ## Compatibility
 
-- Home Assistant **2024.7** or newer (`StaticPathConfig` requirement —
-  declared as `min_ha_version` in the integration manifest).
+- Home Assistant **2025.1** or newer (enforced by HACS via the
+  `homeassistant` key in `hacs.json`; the hard API floor is 2024.7's
+  `StaticPathConfig`).
 - Works on any card that uses `<ha-state-icon>`: all default cards
   (entities, tile, glance, more-info) and most third-party cards (mushroom,
   button-card via its default icon path).
 - Out of scope: cards that draw their own SVG icons
   (`mini-graph-card`, `apex-charts-card` custom paths). They don't go
   through `ha-state-icon`; Smart Icons can't intercept them.
+- **Entities with a user-customized icon** (set via the entity's
+  settings dialog) ignore Smart Icons *glyph* swaps in the web UI —
+  HA's frontend prefers the registry icon over the `icon` state
+  attribute we write. Companion apps read the state attribute, so
+  they still show the swap. Color and background chips are
+  unaffected either way.
+
+### HA 2026.8 state-color defaults
+
+Since HA 2026.8 the **entities card colors icons by entity state by
+default** for all domains, and card config gains a per-row `color:`
+option. Interop with Smart Icons:
+
+- On entities a rule decorates, the rule's color wins — including
+  over a per-row `color:` set in card config.
+- Undecorated entities pick up HA's new state colors; if you prefer
+  the pre-2026.8 neutral look alongside Smart Icons rules, set
+  `color: none` on the card.
+- Transient cosmetic edge: right after a rule stops matching, an
+  entities-card icon may briefly show the plain theme color instead
+  of HA's state color, until that entity's state next changes.
 
 ## Roadmap
 
@@ -286,14 +308,21 @@ attribute bag changes. Implications:
   synthetic updates. Filter them out with
   `new_state.state != old_state.state` (state-only listeners) or by
   checking which attribute keys actually changed (attribute-aware
-  listeners). The injector debounces per-target writes to avoid
-  storming the bus, but rule-eval bursts are still visible.
+  listeners). The injector skips writes that would change nothing
+  (per-target change detection), so steady-state traffic is one
+  write per actual decoration change — but rule-eval bursts are
+  still visible.
 - **Other integrations writing the same attributes** are a conflict
-  zone. Smart Icons re-applies its decoration on every relevant
-  state change and tracks the last `icon` it wrote per target so it
-  only clears the icon when the value still matches our last write
-  (source integrations that overwrite with their own icon are left
-  alone). See [DESIGN.md § 7.0](DESIGN.md#70-architecture--server-side-glyph-client-side-color)
+  zone. Smart Icons re-applies its decoration whenever the source
+  *or the target itself* publishes a state change — a target
+  integration's own write rebuilds the attribute bag without our
+  keys, so the injector restores them immediately. While a rule
+  that sets an `icon` is active, that rule's icon wins over a
+  target-integration icon write. On rule edit/delete, the entity's
+  own pre-rule icon (captured when we first claimed the attribute,
+  refreshed whenever the owner republishes) is written back —
+  popped only if the entity never had one — and icons we never
+  wrote are left alone. See [DESIGN.md § 7.0](DESIGN.md#70-architecture--server-side-glyph-client-side-color)
   for the full discussion.
 
 ## Development

@@ -168,6 +168,30 @@ Open items, in roughly priority order:
   If a future case needs an explicit "inherit even if a higher rule
   set this field" semantic, that's a different feature; the
   parking-lot proposal is closed.
+- **Forward-compat storage round-trip (ALLOW_EXTRA) — decide.** The
+  rule schema is PREVENT_EXTRA, so rules written by a newer version
+  fail validation after a downgrade and are dropped on load (loudly,
+  since the 2026-08 review sweep — a WARNING names the rule and
+  reason). The alternative is preserving unknown keys through
+  load/save so downgrades keep data. Needs a decision + migration
+  story; see DESIGN.md § 4.3.
+- **Whole-config YAML save re-mints rule ids.** `stripForExport`
+  drops ids, so every panel-level YAML save resets `created` stamps
+  and fires removed+added for every rule. Consider keeping ids in
+  the panel-level export (unlike per-rule/gist export) so identity
+  survives round-trips.
+- **Evaluator numeric-coercion parity (Python vs TS).** Known
+  divergences: JS `Number()` accepts `"0x10"` (hex) which Python
+  `float()` rejects; Python accepts `"1_000"`, `"inf"`, `"nan"`
+  which JS rejects or treats differently. Inert today (the TS
+  evaluator isn't in the paint path) but must be reconciled before
+  any preview UI ships — Python semantics are canonical.
+- **Suggested CI/gov changes (human-only files, per AGENTS.md):**
+  release.yml should refuse a tag whose version ≠ manifest.json's
+  `version`; AGENTS.md's "100 tests" count is stale (140 as of the
+  2026-08 review sweep); manifest.json carries a `min_ha_version`
+  key HA doesn't read (the effective floor is hacs.json's
+  `homeassistant: 2025.1.0`) — drop or document it.
 - Consider exposing a tiny JS API (`window.smartIcons.setRule(...)`) for
   use from button-card and similar — turns smart-icons into a service for
   other plugins, not just a UI.
