@@ -10,14 +10,15 @@ per-card configuration.
 [![License](https://img.shields.io/github/license/jpettitt/smart-icons?style=for-the-badge)](LICENSE)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
 
-> **Status:** v0.3.0 — GA. Brings per-rule Mushroom-style
-> background chips, field-level rule merging, an `ha-code-editor`
-> YAML surface, and a glob-target resolution cache for large
-> installs. Template mode was inert through v0.2 / v0.3 alpha and
-> is removed in v0.3.0 (rule stacking covers the use cases — see
-> [`docs/examples.md`](docs/examples.md)). See
-> [CHANGELOG.md](CHANGELOG.md) for the full release notes and
-> upgrade guide.
+> **Status:** v0.3.1 — GA. Maintenance release: decorations now
+> survive target-integration state writes, releasing a rule restores
+> the entity's own icon, entry unload cleans up fully, and HA 2026.8
+> state-color interop is verified and documented (see
+> [Compatibility](#ha-20268-state-color-defaults)). The v0.3 line
+> brings per-rule Mushroom-style background chips, field-level rule
+> merging, an `ha-code-editor` YAML surface, and a glob-target
+> resolution cache. See [CHANGELOG.md](CHANGELOG.md) for full
+> release notes and upgrade guide.
 
 ## See it in action
 
@@ -177,8 +178,8 @@ pre-filled, then **Download**. Or manually:
 4. **Settings → Devices & services → Add Integration** → search "Smart Icons"
    → **Add**. A new sidebar entry, **Smart Icons**, appears for admin users.
 
-For betas (currently the only releases), toggle **Show beta versions** in
-HACS before downloading.
+For beta releases, toggle **Show beta versions** in HACS before
+downloading; stable releases (v0.3.0+) need no toggle.
 
 ### Manual
 

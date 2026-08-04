@@ -1,11 +1,19 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
-## Unreleased
+## v0.3.1 — 2026-08-03
 
-Review sweep against HA 2026.8 (verified: full backend suite passes on
-2026.8.0b3; the painter's mechanism was checked against the shipped
-2026.8 frontend bundle).
+Maintenance release from a full review sweep against HA 2026.8
+(verified: backend suite passes on 2026.8.0b3; the painter's mechanism
+was checked against the shipped 2026.8 frontend bundle and live-tested
+in the dev container on 2026.8.0b4).
+
+**Behavior change (not breaking):** while a rule that sets an `icon`
+is active, it now re-asserts its icon immediately when the target's
+integration writes its own — previously the rule's icon returned at
+the next source change. If you relied on a target integration's icon
+temporarily "winning" over an active rule, that window is gone;
+disable the rule's `icon` field instead.
 
 ### Fixed
 
@@ -65,6 +73,8 @@ Review sweep against HA 2026.8 (verified: full backend suite passes on
   makes decorations win over HA 2026.8's managed entities-card icon
   colors, with regression tests for both the decorated and
   undecorated cases.
+
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.3.0...v0.3.1>
 
 ## v0.3.1a1 — 2026-06-10
 
