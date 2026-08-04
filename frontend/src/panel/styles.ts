@@ -71,6 +71,16 @@ export const panelStyles = css`
     padding: 2px 8px;
     border-radius: 4px;
   }
+  /* Success variant of the same banner (e.g. "Saved N rules.") —
+     same layout, success color, role="status" instead of "alert". */
+  .action-error.action-success {
+    color: var(--success-color, #43a047);
+    background-color: color-mix(
+      in srgb,
+      var(--success-color, #43a047) 10%,
+      transparent
+    );
+  }
   /* Panel-level action bar (visual mode: just the toggle link;
      code mode: toggle on left, Save on right). Mirrors the editor's
      .actions bar but lives directly in the panel content rather than

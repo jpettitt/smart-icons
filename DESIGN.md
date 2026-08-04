@@ -1,7 +1,7 @@
 # smart-icons — Design Document
 
-> **Status:** v0.2.2 shipped. v0.3 work in progress on
-> `feature/icon-bg-circle`: per-rule Mushroom-style background chip,
+> **Status:** v0.3.0 GA shipped; v0.3.1 line in progress. The v0.3
+> cycle delivered the per-rule Mushroom-style background chip,
 > field-level rule merging, and the editor/YAML migration to
 > `ha-code-editor`. The contrasting-outline approach explored
 > earlier in the v0.3 cycle was retired (see
@@ -11,8 +11,9 @@
 > mixes design intent with as-built notes — § 11 (Roadmap) tracks
 > what's actually done.
 >
-> Last substantive revision 2026-05-24 (v0.3.0a3: template-mode
-> removal, ha-code-editor migration, glob-target caching).
+> Last substantive revision 2026-08-03 (v0.3.1 line: injector
+> target-tracking fix, HA 2026.8 state-color interop notes, doc
+> reconciliation with as-built behavior).
 
 ## 1. Motivation
 
@@ -220,9 +221,15 @@ or explicitly-released slots; the injector treats both equivalently
 - `target` must be a known entity_id format; not required to exist yet
   (allow forward declaration).
 - `source` likewise; default = `target`.
-- Mode-specific shape checked with voluptuous schemas (PREVENT_EXTRA
-  on the decoration schema; ALLOW_EXTRA at the top level so unknown
-  forward-compat keys can round-trip without blocking load).
+- Mode-specific shape checked with voluptuous schemas. **As built,
+  the top-level rule schema is PREVENT_EXTRA** (voluptuous' default),
+  not the ALLOW_EXTRA round-trip originally sketched here: unknown
+  keys fail validation, and the store's load path drops the failing
+  rule with a WARNING naming the rule and the reason. Practical
+  consequence: rules written by a *newer* Smart Icons version don't
+  survive a downgrade — they're dropped loudly on load. Whether to
+  move to an ALLOW_EXTRA round-trip (unknown keys preserved through
+  load/save) is an open TODO item.
 - Color / background_color strings validated by a relaxed regex (we
   don't try to be a CSS parser — anything the browser would accept
   passes).
@@ -404,7 +411,11 @@ Backing file: `.storage/smart_icons.rules`. Pure JSON:
 
 Benefits inherited from `Store`:
 
-- Atomic writes, debounced (~10 s) to avoid disk thrash on bulk edits.
+- Atomic writes (tmp-file + rename). As built, saves are immediate —
+  one write per mutation, and bulk YAML saves already collapse to a
+  single write via `replace_all` — not the debounced (~10 s)
+  `async_delay_save` originally sketched here. Switch to delayed
+  saves only if per-edit writes ever show up as disk thrash.
 - Included automatically in HA backups / snapshots.
 - Versioned: we get a `async_migrate_func` hook for schema changes.
 - Per-installation (not per-user). Matches HA's model — these are dashboard
@@ -478,11 +489,14 @@ What we accept in exchange:
   ([§ 4.2](#42-decorations-and-the-priority-merge)) to make a
   divergence loud.
 - Releasing a rule cleans up `smart_icons_color`,
-  `smart_icons_background`, and the `icon` attribute. The icon
-  attribute pop is guarded: we only clear it when the current value
-  still matches what we last wrote, so a source integration that
-  republished its own icon between our write and our clear is left
-  alone (`_injected_icons` bookkeeping in
+  `smart_icons_background`, and the `icon` attribute. Icon cleanup is
+  guarded and *restoring*: we only touch the attribute when the
+  current value still matches what we last wrote, and we hand back
+  the owner's own pre-rule icon (captured at claim time, refreshed
+  whenever the owner republishes mid-rule) rather than popping —
+  popping is reserved for entities that never had their own icon.
+  An owner integration that republished its icon between our write
+  and our clear is left alone (`_icon_claims` bookkeeping in
   [`injector.py`](custom_components/smart_icons/injector.py)).
 - Calling `hass.states.async_set` fires `state_changed`. Automations
   triggered on transitions are unaffected, but ones triggered on raw
@@ -565,6 +579,15 @@ Catch-up scans at 100 / 500 / 2000 ms post-`start()` cover Lovelace
 renders that don't fire usable child-list mutations.
 
 ### 7.3 Politeness
+
+> **Status: not implemented.** The painter currently claims every
+> host it decorates unconditionally; the stand-down protocol below
+> is design intent, tracked as a v0.4 backlog item in § 11 / TODO.md.
+> In practice inline `style.color` written last wins, and since HA
+> 2026.8 the entities card itself manages inline color on
+> `ha-state-icon` (see the ordering note in
+> `frontend/src/painter.ts`) — smart-icons wins by Lit template part
+> order, not by negotiation.
 
 Other plugins also set `style.color` on icons and some swap glyphs. We don't
 want a paint war.
@@ -777,7 +800,7 @@ removed entirely in v0.3.0a3 — see § 11.)
 | `store.py` | `RuleStore` wrapping `Store`; cache, subscribers, migrations |
 | `rule.py` | `@dataclass(slots=True)` Rule type + validation helpers |
 | `evaluator.py` | Pure rule evaluation — `evaluate_thresholds`, `evaluate_mapping`, `evaluate_rule`, `merge_decorations` (field-level priority merge; v0.3 replaces v0.2's `pick_winner`, kept as alias). Mirrors `frontend/src/evaluator.ts` ([§ 7.0](#70-architecture--server-side-glyph-client-side-color)). |
-| `injector.py` | `IconInjector` — subscribes to source-entity `state_changed`, evaluates rules, writes `attributes.icon` + `attributes.smart_icons_color` + `attributes.smart_icons_background` to target via `hass.states.async_set`. Tracks last-written icon per target so rule edits/deletes can clear the attribute without clobbering source-set values. |
+| `injector.py` | `IconInjector` — subscribes to `state_changed` for every rule's source *and* its resolved targets (a target integration's own write rebuilds the attribute bag without our keys; the target-side event is what lets us re-apply immediately). Evaluates rules, writes `attributes.icon` + `attributes.smart_icons_color` + `attributes.smart_icons_background` via `hass.states.async_set`. Tracks last-written icon per target so rule edits/deletes clear the attribute only when the current value is still ours. |
 | `websocket_api.py` | Five command handlers, voluptuous schemas |
 | `frontend.py` | `async_register_static_paths` + `add_extra_js_url`; serves the bundled JS at `/smart_icons_static/smart_icons.js` |
 

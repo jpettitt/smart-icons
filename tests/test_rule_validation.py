@@ -180,6 +180,48 @@ def test_source_attribute_length_cap_rejected():
         validate_rule(_thresholds_rule(source_attribute=too_long))
 
 
+@pytest.mark.parametrize("field", ["color", "icon", "background_color"])
+def test_decoration_value_length_cap_rejected(field: str):
+    """Decoration values over 255 chars are rejected — `icon` in
+    particular is recorder-persisted, so unbounded values would land in
+    the database. Same cap as source_attribute."""
+    with pytest.raises(vol.Invalid, match="exceeds max length"):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "mapping",
+                "mapping": {"on": {field: "x" * 256}},
+            }
+        )
+
+
+def test_decoration_value_at_cap_accepted():
+    """255 chars exactly is fine — the cap is an upper bound, not a
+    working limit (long var(--…) chains are legitimate)."""
+    out = validate_rule(
+        {
+            "target": "light.kitchen",
+            "mode": "mapping",
+            "mapping": {"on": {"color": "x" * 255}},
+        }
+    )
+    assert out["mapping"]["on"]["color"] == "x" * 255
+
+
+def test_mapping_key_length_cap_rejected():
+    """Mapping keys over 255 chars are rejected — keys are compared
+    against source state on every evaluation and round-trip through
+    storage."""
+    with pytest.raises(vol.Invalid, match="exceeds max length"):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "mapping",
+                "mapping": {"k" * 256: {"color": "#fff"}},
+            }
+        )
+
+
 def test_source_attribute_non_string_rejected():
     """Non-string source_attribute is rejected — used to be `vol.Any(str, None)`
     which silently accepted weird types via voluptuous coercion."""

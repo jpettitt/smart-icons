@@ -47,12 +47,33 @@ class BulkReplaceError(Exception):
             f"{len(errors)} rule(s) failed validation during replace_all"
         )
 
-# A decoration field may be:
-#  - a non-empty string (color value or icon string)
-#  - one of the "release" sentinels: "", "inherit", "unset", None
-# We accept all of these at the storage layer; the evaluator interprets
-# the sentinels as "fall back to defaults" (see DESIGN.md § 4.2).
-_DECORATION_VALUE = vol.Any(str, None)
+#: Cap on decoration string values (color / icon / background_color) and
+#: mapping keys. Real values are short (`#rrggbb`, `mdi:foo`, a var(--…)
+#: chain); 255 rejects accidental huge-paste payloads without
+#: constraining real use. `icon` in particular is recorder-persisted, so
+#: unbounded values would land in the database. Matches the
+#: source_attribute cap.
+_MAX_DECORATION_VALUE_LENGTH = 255
+
+
+def _bounded_decoration_value(v: Any) -> str | None:
+    """One decoration field: a string (color value / icon string / a
+    release sentinel like "" / "inherit" / "unset") or None. The
+    evaluator interprets the sentinels as "fall back to defaults"
+    (see DESIGN.md § 4.2)."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise vol.Invalid("decoration value must be a string or null")
+    if len(v) > _MAX_DECORATION_VALUE_LENGTH:
+        raise vol.Invalid(
+            f"decoration value exceeds max length "
+            f"({len(v)} > {_MAX_DECORATION_VALUE_LENGTH})"
+        )
+    return v
+
+
+_DECORATION_VALUE = _bounded_decoration_value
 
 DECORATION_SCHEMA = vol.Schema(
     {
@@ -132,6 +153,11 @@ def _mapping_dict(mapping: dict[str, Any]) -> dict[str, dict[str, Any]]:
             raise vol.Invalid(
                 f"mapping keys must be strings, got {type(k).__name__} "
                 f"for key {k!r} — quote it as a string"
+            )
+        if len(k) > _MAX_DECORATION_VALUE_LENGTH:
+            raise vol.Invalid(
+                f"mapping key exceeds max length "
+                f"({len(k)} > {_MAX_DECORATION_VALUE_LENGTH})"
             )
         out[k] = DECORATION_SCHEMA(v)
     return out
