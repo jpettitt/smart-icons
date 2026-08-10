@@ -1,6 +1,23 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Stored decoration values are now shape-checked** (defense-in-depth
+  from an XSS review — every render sink was already inert): `icon`
+  must be `prefix:name` (the shape `<ha-icon>` can resolve; DESIGN.md
+  § 4.3 documented this check but it didn't exist), and color values
+  reject characters no CSS color uses (`<`, `>`, `{`, `}`, `;`,
+  quotes, backslash, control chars, `url(`). Existing rules with
+  values that fail these checks are dropped at load with the WARNING
+  introduced in v0.3.1 — real-world values (hex, rgb()/hsl(), named,
+  `var(--…)`, `mdi:`/`hass:`/custom-pack icons) are unaffected.
+- Release workflow now refuses a tag whose version doesn't match
+  `manifest.json`; dropped the unread `min_ha_version` manifest key
+  (hacs.json's `homeassistant` is the enforced floor).
+
 ## v0.3.1 — 2026-08-03
 
 Maintenance release from a full review sweep against HA 2026.8

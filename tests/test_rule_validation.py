@@ -229,6 +229,95 @@ def test_source_attribute_non_string_rejected():
         validate_rule(_thresholds_rule(source_attribute=123))
 
 
+@pytest.mark.parametrize("field", ["color", "background_color"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "<script>alert(1)</script>",
+        "red; background-image: url(//evil.example)",
+        "url(//evil.example)",
+        'red" onmouseover="alert(1)',
+        "red\\75 rl(//evil)",
+        "red{}",
+    ],
+)
+def test_color_rejects_markup_and_css_smuggling(field: str, payload: str):
+    """Colors are inert today (CSSOM property assignment discards invalid
+    values), but the deny-list keeps stored values safe even if a future
+    sink renders them somewhere less forgiving."""
+    with pytest.raises(vol.Invalid, match="color value contains"):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "mapping",
+                "mapping": {"on": {field: payload}},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "#fff",
+        "#ffcc00",
+        "rgb(255, 0, 0)",
+        "rgba(0, 0, 0, 0.5)",
+        "hsl(120, 50%, 50%)",
+        "steelblue",
+        "var(--my-theme-color)",
+        "color-mix(in srgb, red 40%, transparent)",
+    ],
+)
+def test_real_color_values_accepted(value: str):
+    out = validate_rule(
+        {
+            "target": "light.kitchen",
+            "mode": "mapping",
+            "mapping": {"on": {"color": value}},
+        }
+    )
+    assert out["mapping"]["on"]["color"] == value
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "<script>alert(1)</script>",
+        "javascript:alert(1)",
+        "mdi:lamp<img src=x>",
+        "mdi lamp",
+        "no-colon",
+    ],
+)
+def test_icon_rejects_non_prefix_name_shapes(payload: str):
+    """Icons are lookup keys in <ha-icon>, never markup — but they're
+    recorder-persisted and reach every viewer's browser, so enforce the
+    documented prefix:name shape at the door (DESIGN.md § 4.3)."""
+    with pytest.raises(vol.Invalid, match="icon must look like"):
+        validate_rule(
+            {
+                "target": "light.kitchen",
+                "mode": "mapping",
+                "mapping": {"on": {"icon": payload}},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["mdi:lamp", "mdi:lamp-outline", "hass:home", "phu:cast-connected", "pack_2:Name_1"],
+)
+def test_real_icon_values_accepted(value: str):
+    out = validate_rule(
+        {
+            "target": "light.kitchen",
+            "mode": "mapping",
+            "mapping": {"on": {"icon": value}},
+        }
+    )
+    assert out["mapping"]["on"]["icon"] == value
+
+
 def test_decoration_release_sentinels_accepted():
     out = validate_rule(
         _thresholds_rule(
