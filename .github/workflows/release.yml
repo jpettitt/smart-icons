@@ -78,6 +78,21 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
+      # Refuse to publish a tag whose version disagrees with the
+      # manifest — otherwise a stale manifest ships inside the zip and
+      # the WS version command lies about what's installed.
+      # frontend/package.json is deliberately not gated: its prerelease
+      # format (0.3.1-alpha.1, semver) differs from the manifest's
+      # PEP 440 style (0.3.1a1), so equality only holds for finals.
+      - name: Verify tag matches manifest version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          MANIFEST_VERSION=$(jq -r .version custom_components/smart_icons/manifest.json)
+          if [ "$TAG" != "v$MANIFEST_VERSION" ]; then
+            echo "::error::Tag $TAG does not match manifest version $MANIFEST_VERSION — bump the manifest (and frontend package) before tagging."
+            exit 1
+          fi
+
       - name: Build smart_icons.zip (HACS layout — contents of integration dir)
         # `zip -r ../smart_icons.zip .` from inside the integration dir
         # produces a zip whose entries are at the root (no
