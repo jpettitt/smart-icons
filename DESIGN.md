@@ -230,9 +230,13 @@ or explicitly-released slots; the injector treats both equivalently
   survive a downgrade — they're dropped loudly on load. Whether to
   move to an ALLOW_EXTRA round-trip (unknown keys preserved through
   load/save) is an open TODO item.
-- Color / background_color strings validated by a relaxed regex (we
-  don't try to be a CSS parser — anything the browser would accept
-  passes).
+- Color / background_color strings validated by a character deny-list,
+  not a CSS grammar (`<`, `>`, `{`, `}`, `;`, quotes, backslash,
+  control chars, and `url(` are rejected; hex / rgb() / hsl() / named /
+  var(--…) / color-mix() all pass). The sinks are already inert — CSSOM
+  property assignment discards invalid values wholesale — so this is
+  defense-in-depth for stored data, keeping payloads out of storage in
+  case a future sink renders them somewhere less forgiving.
 - Icon strings validated against a `prefix:name` shape; we don't try to
   verify the icon actually exists in any installed pack (the renderer will
   fall back to a placeholder if it's missing, which is the right UX).

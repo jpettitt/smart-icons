@@ -16,6 +16,7 @@ be set in any given decoration.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,12 +56,29 @@ class BulkReplaceError(Exception):
 #: source_attribute cap.
 _MAX_DECORATION_VALUE_LENGTH = 255
 
+#: Release sentinels shared by every decoration field — pass through
+#: before shape checks. Keep in sync with evaluator._RELEASE_SENTINELS.
+_RELEASE_SENTINELS = frozenset({"", "inherit", "unset"})
+
+#: Icon strings must be `prefix:name` — the shape `<ha-icon>` resolves
+#: (mdi:, hass:, custom packs). Anything else can't render and only
+#: exists as a stored payload, so reject at the door.
+_ICON_RE = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+#: Characters no CSS *color* value ever needs. This is a deny-list, not
+#: a CSS grammar (hex / rgb() / hsl() / named / var(--…) all pass): it
+#: exists as defense-in-depth so stored values stay inert even if a
+#: future sink renders them somewhere less safe than a CSSOM property
+#: assignment (which discards invalid values wholesale). Backslash is
+#: banned because CSS escapes could smuggle the other banned tokens;
+#: `url(` because it's the only network-fetching CSS token.
+_COLOR_FORBIDDEN = re.compile(r"[<>{};\"'\\\x00-\x1f]|url\(", re.IGNORECASE)
+
 
 def _bounded_decoration_value(v: Any) -> str | None:
-    """One decoration field: a string (color value / icon string / a
-    release sentinel like "" / "inherit" / "unset") or None. The
-    evaluator interprets the sentinels as "fall back to defaults"
-    (see DESIGN.md § 4.2)."""
+    """Common checks for one decoration field: a string (or a release
+    sentinel / None — the evaluator interprets sentinels as "fall back
+    to defaults", see DESIGN.md § 4.2), length-capped."""
     if v is None:
         return None
     if not isinstance(v, str):
@@ -73,17 +91,39 @@ def _bounded_decoration_value(v: Any) -> str | None:
     return v
 
 
-_DECORATION_VALUE = _bounded_decoration_value
+def _color_value(v: Any) -> str | None:
+    """A color-typed decoration field (color / background_color)."""
+    out = _bounded_decoration_value(v)
+    if out is None or out in _RELEASE_SENTINELS:
+        return out
+    if _COLOR_FORBIDDEN.search(out):
+        raise vol.Invalid(
+            "color value contains characters not used by any CSS color "
+            "(<, >, {, }, ;, quotes, backslash, control chars, or url()"
+        )
+    return out
+
+
+def _icon_value(v: Any) -> str | None:
+    """An icon-typed decoration field — `prefix:name` or a sentinel."""
+    out = _bounded_decoration_value(v)
+    if out is None or out in _RELEASE_SENTINELS:
+        return out
+    if not _ICON_RE.match(out):
+        raise vol.Invalid(
+            f"icon must look like 'mdi:name' (prefix:name), got {out!r}"
+        )
+    return out
 
 DECORATION_SCHEMA = vol.Schema(
     {
-        vol.Optional("color"): _DECORATION_VALUE,
-        vol.Optional("icon"): _DECORATION_VALUE,
+        vol.Optional("color"): _color_value,
+        vol.Optional("icon"): _icon_value,
         # Optional background color — when set, the painter renders a
         # Mushroom-style colored circle behind the icon. Accepts the
         # same value space as `color` (CSS color string, "", or
         # release sentinels).
-        vol.Optional("background_color"): _DECORATION_VALUE,
+        vol.Optional("background_color"): _color_value,
     },
     extra=vol.PREVENT_EXTRA,
 )
@@ -99,9 +139,9 @@ _THRESHOLD_ENTRY = vol.Schema(
         # eq is the only comparator that may be string-typed (string-state
         # comparison) or numeric; coerce-then-fallback handled at eval time.
         vol.Optional("eq"): vol.Any(vol.Coerce(float), str),
-        vol.Optional("color"): _DECORATION_VALUE,
-        vol.Optional("icon"): _DECORATION_VALUE,
-        vol.Optional("background_color"): _DECORATION_VALUE,
+        vol.Optional("color"): _color_value,
+        vol.Optional("icon"): _icon_value,
+        vol.Optional("background_color"): _color_value,
     },
     extra=vol.PREVENT_EXTRA,
 )
