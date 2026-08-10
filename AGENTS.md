@@ -114,7 +114,7 @@ These are the same checks `ci.yml` runs. Run them locally before
 you commit so CI is a backstop, not your test runner.
 
 ```bash
-# Backend tests — 100 currently pass, must stay at 100 (or rise)
+# Backend tests — 173 currently pass, must stay at 173 (or rise)
 .venv/bin/pytest -q
 
 # Frontend, from /frontend

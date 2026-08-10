@@ -186,12 +186,6 @@ Open items, in roughly priority order:
   which JS rejects or treats differently. Inert today (the TS
   evaluator isn't in the paint path) but must be reconciled before
   any preview UI ships — Python semantics are canonical.
-- **Suggested CI/gov changes (human-only files, per AGENTS.md):**
-  release.yml should refuse a tag whose version ≠ manifest.json's
-  `version`; AGENTS.md's "100 tests" count is stale (140 as of the
-  2026-08 review sweep); manifest.json carries a `min_ha_version`
-  key HA doesn't read (the effective floor is hacs.json's
-  `homeassistant: 2025.1.0`) — drop or document it.
 - Consider exposing a tiny JS API (`window.smartIcons.setRule(...)`) for
   use from button-card and similar — turns smart-icons into a service for
   other plugins, not just a UI.
