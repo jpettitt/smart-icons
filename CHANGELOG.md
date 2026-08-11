@@ -1,7 +1,10 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
-## Unreleased
+## v0.3.2b1 — 2026-08-10
+
+Beta: storage-value hardening from an XSS review of the rule fields,
+plus release-pipeline and metadata cleanups. No feature changes.
 
 ### Changed
 
@@ -18,7 +21,9 @@
   `manifest.json`; dropped the unread `min_ha_version` manifest key
   (hacs.json's `homeassistant` is the enforced floor).
 
-## v0.3.1 — 2026-08-03
+**Full Changelog**: <https://github.com/jpettitt/smart-icons/compare/v0.3.1...v0.3.2b1>
+
+## v0.3.1 — 2026-08-10
 
 Maintenance release from a full review sweep against HA 2026.8
 (verified: backend suite passes on 2026.8.0b3; the painter's mechanism
